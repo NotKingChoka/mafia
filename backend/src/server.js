@@ -12,7 +12,7 @@ const app = express();
 const port = Number(process.env.PORT || 4000);
 const corsOrigin = process.env.CORS_ORIGIN || "*";
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const frontendDist = join(__dirname, "..", "..", "..", "frontend", "dist");
+const frontendDist = join(__dirname, "..", "..", "frontend", "dist");
 
 app.use(
   cors({
