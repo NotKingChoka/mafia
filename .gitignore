@@ -6,4 +6,6 @@ dist/
 *.log
 npm-debug.log*
 frontend/dist/
+аватарки/
+аватарка для сайта/
 backend/data/

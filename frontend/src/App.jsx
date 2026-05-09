@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import {
   Bot,
+  ChevronDown,
   Check,
   Copy,
   Crown,
@@ -15,6 +16,7 @@ import {
   Mic,
   MicOff,
   Moon,
+  Move,
   Play,
   Send,
   Settings,
@@ -36,6 +38,7 @@ const SOCKET_URL =
     ? "http://localhost:4000"
     : window.location.origin);
 const STORAGE_KEY = "mafia-online-session";
+const AVATAR_OPTIONS = Array.from({ length: 21 }, (_, index) => `/avatars/avatar-${String(index + 1).padStart(2, "0")}.png`);
 
 const defaultSettings = {
   capacity: 10,
@@ -162,26 +165,32 @@ function HomeScreen({ connected, joinCode, setJoinCode, socket }) {
   const [mode, setMode] = useState(joinCode ? "join" : "create");
   const [nickname, setNickname] = useState("");
   const [roomName, setRoomName] = useState("Закрытый клуб");
-  const [avatarSeed, setAvatarSeed] = useState(() => `player-${Date.now()}`);
+  const [selectedAvatar, setSelectedAvatar] = useState(AVATAR_OPTIONS[0]);
+  const [avatarZoom, setAvatarZoom] = useState(1);
+  const [submitting, setSubmitting] = useState(false);
   const [settings, setSettings] = useState(defaultSettings);
-  const avatar = useMemo(() => createAvatar(avatarSeed || nickname || "player"), [avatarSeed, nickname]);
+  const fallbackAvatar = useMemo(() => createAvatar(nickname || "player"), [nickname]);
 
-  function createRoom() {
+  async function createRoom() {
+    setSubmitting(true);
     socket?.emit("createRoom", {
       nickname,
-      avatar,
+      avatar: await renderAvatarDataUrl(selectedAvatar, avatarZoom, fallbackAvatar),
       roomName,
       settings
     });
+    setSubmitting(false);
   }
 
-  function joinRoom() {
+  async function joinRoom() {
+    setSubmitting(true);
     socket?.emit("joinRoom", {
       roomCode: joinCode,
       nickname,
-      avatar,
+      avatar: await renderAvatarDataUrl(selectedAvatar, avatarZoom, fallbackAvatar),
       playerId: readSession()?.playerId
     });
+    setSubmitting(false);
   }
 
   const canSubmit = connected && nickname.trim().length > 0;
@@ -210,15 +219,48 @@ function HomeScreen({ connected, joinCode, setJoinCode, socket }) {
         </div>
 
         <div className="profile-row">
-          <img className="avatar-large" src={avatar} alt="Аватар" />
+          <div className="avatar-preview">
+            <img
+              className="avatar-large"
+              src={selectedAvatar}
+              alt="Аватар"
+              style={{ transform: `scale(${avatarZoom})` }}
+            />
+          </div>
           <button
             className="icon-button"
             type="button"
             title="Случайный аватар"
-            onClick={() => setAvatarSeed(`player-${Math.random()}-${Date.now()}`)}
+            onClick={() => setSelectedAvatar(AVATAR_OPTIONS[Math.floor(Math.random() * AVATAR_OPTIONS.length)])}
           >
             <Dice5 size={20} />
           </button>
+        </div>
+
+        <label className="range-field avatar-zoom">
+          <span>Приближение аватарки: {Math.round(avatarZoom * 100)}%</span>
+          <input
+            type="range"
+            min="1"
+            max="1.8"
+            step="0.05"
+            value={avatarZoom}
+            onChange={(event) => setAvatarZoom(Number(event.target.value))}
+          />
+        </label>
+
+        <div className="avatar-picker" aria-label="Выбор аватарки">
+          {AVATAR_OPTIONS.map((avatarPath, index) => (
+            <button
+              key={avatarPath}
+              className={selectedAvatar === avatarPath ? "avatar-option active" : "avatar-option"}
+              type="button"
+              title={`Аватар ${index + 1}`}
+              onClick={() => setSelectedAvatar(avatarPath)}
+            >
+              <img src={avatarPath} alt="" />
+            </button>
+          ))}
         </div>
 
         <label className="field">
@@ -238,7 +280,7 @@ function HomeScreen({ connected, joinCode, setJoinCode, socket }) {
               <input value={roomName} maxLength={36} onChange={(event) => setRoomName(event.target.value)} />
             </label>
             <RoomSettingsForm settings={settings} onChange={setSettings} />
-            <button className="primary-action" disabled={!canSubmit} onClick={createRoom}>
+            <button className="primary-action" disabled={!canSubmit || submitting} onClick={createRoom}>
               <Play size={20} /> Создать комнату
             </button>
           </>
@@ -253,7 +295,7 @@ function HomeScreen({ connected, joinCode, setJoinCode, socket }) {
                 placeholder="ABC123"
               />
             </label>
-            <button className="primary-action" disabled={!canSubmit || !joinCode.trim()} onClick={joinRoom}>
+            <button className="primary-action" disabled={!canSubmit || !joinCode.trim() || submitting} onClick={joinRoom}>
               <DoorOpen size={20} /> Присоединиться
             </button>
           </>
@@ -513,25 +555,80 @@ function GameView({ room, emit, onLeave }) {
       </header>
 
       <div className="game-main">
-        <aside className="side-panel left-side">
+        <FloatingPanel id="left" title="Панели" className="left-side">
           <RolePanel room={room} />
           <ActionPanel room={room} emit={emit} />
           {room.viewer.canManage ? <HostPanel room={room} emit={emit} /> : null}
-        </aside>
+        </FloatingPanel>
 
         <GameTable room={room} emit={emit} />
 
-        <aside className={`side-panel chat-side ${chatOpen ? "open" : ""}`}>
+        <FloatingPanel id="chat" title="Чат" className={`chat-side ${chatOpen ? "open" : ""}`} defaultCollapsed={false}>
           <button className="icon-button close-chat mobile-only" onClick={() => setChatOpen(false)} title="Закрыть чат">
             <LogOut size={18} />
           </button>
           <ChatPanel room={room} emit={emit} />
           <EventPanel room={room} />
-        </aside>
+        </FloatingPanel>
       </div>
 
       {room.winner ? <VictoryModal room={room} onLeave={onLeave} /> : null}
     </section>
+  );
+}
+
+function FloatingPanel({ id, title, className = "", children, defaultCollapsed = false }) {
+  const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  const [position, setPosition] = useState({ x: 0, y: 0 });
+  const dragRef = useRef(null);
+
+  function startDrag(event) {
+    if (event.button !== 0) return;
+    dragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      x: position.x,
+      y: position.y
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+
+  function onDrag(event) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    setPosition({
+      x: clamp(drag.x + event.clientX - drag.startX, -420, 420),
+      y: clamp(drag.y + event.clientY - drag.startY, -260, 420)
+    });
+  }
+
+  function stopDrag(event) {
+    if (dragRef.current?.pointerId === event.pointerId) {
+      dragRef.current = null;
+    }
+  }
+
+  return (
+    <aside
+      className={`side-panel floating-panel ${className} ${collapsed ? "collapsed" : ""}`}
+      style={{ "--panel-x": `${position.x}px`, "--panel-y": `${position.y}px` }}
+    >
+      <div className="panel-dragbar" onPointerDown={startDrag} onPointerMove={onDrag} onPointerUp={stopDrag} onPointerCancel={stopDrag}>
+        <Move size={16} />
+        <span>{title}</span>
+        <button
+          className="panel-collapse"
+          type="button"
+          title={collapsed ? "Развернуть" : "Свернуть"}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => setCollapsed((value) => !value)}
+        >
+          <ChevronDown size={16} />
+        </button>
+      </div>
+      <div className="panel-body">{children}</div>
+    </aside>
   );
 }
 
@@ -638,7 +735,9 @@ function ActionPanel({ room, emit }) {
         <span>Ход партии</span>
       </div>
       <div className="phase-copy">
-        {room.phase === "night" && room.availableNightAction ? (
+        {room.phase === "night" && room.round === 1 ? (
+          <p>Первая ночь проходит без голосования мафии и убийств. Создатель завершит её вручную или по таймеру.</p>
+        ) : room.phase === "night" && room.availableNightAction ? (
           <p>Выберите цель на игровом столе.</p>
         ) : room.phase === "night" ? (
           <p>Дождитесь действий ночных ролей.</p>
@@ -689,6 +788,11 @@ function HostPanel({ room, emit }) {
       <button className="secondary-action" onClick={() => emit("advancePhase")}>
         <Play size={18} /> {labelByPhase[room.phase] || "Следующая фаза"}
       </button>
+      {room.phase === "voting" ? (
+        <button className="ghost-action host-skip" onClick={() => emit("skipVoting")}>
+          <Vote size={18} /> Пропустить голосование
+        </button>
+      ) : null}
       {helperByPhase[room.phase] ? <div className="muted-box host-hint">{helperByPhase[room.phase]}</div> : null}
       {!room.settings.autoHost ? <div className="muted-box">В ручном режиме создатель видит роли игроков и двигает фазы.</div> : null}
     </section>
@@ -921,6 +1025,37 @@ function createAvatar(seed) {
 
 function hashString(value) {
   return value.split("").reduce((hash, char) => (hash * 31 + char.charCodeAt(0)) | 0, 11);
+}
+
+function renderAvatarDataUrl(src, zoom = 1, fallback) {
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.crossOrigin = "anonymous";
+    image.onload = () => {
+      const size = 192;
+      const canvas = document.createElement("canvas");
+      canvas.width = size;
+      canvas.height = size;
+      const context = canvas.getContext("2d");
+      if (!context) {
+        resolve(src || fallback);
+        return;
+      }
+
+      const safeZoom = clamp(Number(zoom) || 1, 1, 1.8);
+      const sourceSize = Math.min(image.naturalWidth, image.naturalHeight) / safeZoom;
+      const sx = (image.naturalWidth - sourceSize) / 2;
+      const sy = (image.naturalHeight - sourceSize) / 2;
+      context.drawImage(image, sx, sy, sourceSize, sourceSize, 0, 0, size, size);
+      resolve(canvas.toDataURL("image/png"));
+    };
+    image.onerror = () => resolve(fallback);
+    image.src = src || fallback;
+  });
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
 export default App;

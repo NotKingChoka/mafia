@@ -49,6 +49,11 @@ Root/backend:
 PORT=4000
 CORS_ORIGIN=http://localhost:5173
 WEBRTC_STUN_URL=stun:stun.l.google.com:19302
+BOT_AI_ENABLED=false
+BOT_AI_API_URL=https://api.openai.com/v1/chat/completions
+BOT_AI_MODEL=gpt-4o-mini
+BOT_AI_API_KEY=
+BOT_AI_TIMEOUT_MS=4500
 ```
 
 Frontend:
@@ -110,7 +115,13 @@ Env:
 NODE_ENV=production
 CORS_ORIGIN=*
 WEBRTC_STUN_URL=stun:stun.l.google.com:19302
+BOT_AI_ENABLED=false
+BOT_AI_API_URL=https://api.openai.com/v1/chat/completions
+BOT_AI_MODEL=gpt-4o-mini
+BOT_AI_TIMEOUT_MS=4500
 ```
+
+Если хотите, чтобы боты отвечали через нейросеть, добавьте на Render секретную переменную `BOT_AI_API_KEY` и поставьте `BOT_AI_ENABLED=true`. Код использует OpenAI-compatible Chat Completions endpoint, поэтому можно подставить другой совместимый URL в `BOT_AI_API_URL`. Боты читают последние сообщения игроков и других ботов, но не получают чужие скрытые роли.
 
 ### Railway
 
@@ -170,6 +181,8 @@ CORS_ORIGIN=https://project-name.vercel.app
 - автоматический режим с таймерами фаз;
 - ночь, утро, обсуждение, голосование и проверка победы;
 - текстовый чат, системные события и чат мертвых;
+- AI-ready разговоры ботов через env-переменные с fallback-репликами без ключа;
+- выбор аватарок из папки `frontend/public/avatars` и favicon из `frontend/public/site-avatar.png`;
 - подготовка интерфейса и `/api/voice-config` под WebRTC;
 - адаптивный игровой стол с местами игроков вокруг изображения `стол`;
 - затемнение мертвых игроков, подсветка говорящего, окно победы.

@@ -13,3 +13,11 @@ services:
         value: "*"
       - key: WEBRTC_STUN_URL
         value: stun:stun.l.google.com:19302
+      - key: BOT_AI_ENABLED
+        value: "false"
+      - key: BOT_AI_API_URL
+        value: https://api.openai.com/v1/chat/completions
+      - key: BOT_AI_MODEL
+        value: gpt-4o-mini
+      - key: BOT_AI_TIMEOUT_MS
+        value: "4500"
