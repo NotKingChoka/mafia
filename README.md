@@ -1,5 +1,7 @@
 # Мафия Онлайн
 
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/NotKingChoka/mafia)
+
 Полноценный сайт для онлайн-игры «Мафия»: комнаты, игроки, роли, фазы партии, ночные действия, голосование, текстовый чат и интерфейс игрового стола сверху. Проект можно деплоить двумя способами: одним Node-сервисом на Render/Railway/Fly.io/VPS или раздельно как Vercel frontend + отдельный Socket.IO backend.
 
 ## Структура
