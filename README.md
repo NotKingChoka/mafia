@@ -1,12 +1,13 @@
 # Мафия Онлайн
 
-Полноценный сайт для онлайн-игры «Мафия»: комнаты, игроки, роли, фазы партии, ночные действия, голосование, текстовый чат и интерфейс игрового стола сверху. Frontend подготовлен под Vercel, backend с Socket.IO подготовлен под отдельный деплой на Render, Railway, Fly.io или VPS.
+Полноценный сайт для онлайн-игры «Мафия»: комнаты, игроки, роли, фазы партии, ночные действия, голосование, текстовый чат и интерфейс игрового стола сверху. Проект можно деплоить двумя способами: одним Node-сервисом на Render/Railway/Fly.io/VPS или раздельно как Vercel frontend + отдельный Socket.IO backend.
 
 ## Структура
 
 - `frontend` - React/Vite интерфейс.
 - `backend` - Node.js/Express + Socket.IO сервер комнат.
 - `frontend/public/stol.png` - изображение стола, которое используется в партии.
+- `render.yaml`, `railway.json`, `Dockerfile` - готовые конфиги для production-деплоя.
 
 ## Локальный запуск
 
@@ -83,7 +84,51 @@ VITE_SOCKET_URL=https://your-backend-url
 
 После деплоя frontend получит постоянную ссылку вида `https://project-name.vercel.app`.
 
-## Деплой backend
+## Деплой одним сервисом
+
+Самый простой вариант для рабочей онлайн-игры: деплоить весь проект одним Node-сервисом. Тогда backend отдает собранный frontend и Socket.IO работает на том же постоянном домене.
+
+### Render
+
+1. Подключите GitHub-репозиторий в Render.
+2. Выберите Blueprint или Web Service из репозитория.
+3. Render прочитает `render.yaml`.
+4. После деплоя сайт будет доступен по адресу вида `https://mafia-online.onrender.com`.
+
+Render настройки вручную:
+
+```bash
+Build Command: npm install && npm run build
+Start Command: npm start
+```
+
+Env:
+
+```env
+NODE_ENV=production
+CORS_ORIGIN=*
+WEBRTC_STUN_URL=stun:stun.l.google.com:19302
+```
+
+### Railway
+
+Railway прочитает `railway.json`.
+
+```bash
+Build Command: npm install && npm run build
+Start Command: npm start
+```
+
+### Docker / VPS / Fly.io
+
+Можно использовать `Dockerfile`:
+
+```bash
+docker build -t mafia-online .
+docker run -p 4000:4000 mafia-online
+```
+
+## Раздельный деплой backend
 
 Socket.IO держит постоянное соединение, поэтому обычные Vercel Serverless Functions не подходят для постоянного WebSocket-сервера. Backend лучше деплоить отдельно:
 

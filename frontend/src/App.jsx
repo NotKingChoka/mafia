@@ -30,7 +30,11 @@ import {
   WifiOff
 } from "lucide-react";
 
-const SOCKET_URL = import.meta.env.VITE_SOCKET_URL || "http://localhost:4000";
+const SOCKET_URL =
+  import.meta.env.VITE_SOCKET_URL ||
+  (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+    ? "http://localhost:4000"
+    : window.location.origin);
 const STORAGE_KEY = "mafia-online-session";
 
 const defaultSettings = {

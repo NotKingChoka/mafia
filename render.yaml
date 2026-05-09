@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: mafia-online
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: CORS_ORIGIN
+        value: "*"
+      - key: WEBRTC_STUN_URL
+        value: stun:stun.l.google.com:19302
