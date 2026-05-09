@@ -41,6 +41,7 @@ const defaultSettings = {
   capacity: 10,
   autoHost: true,
   communication: "text",
+  botTalk: false,
   roles: {
     civilian: true,
     mafia: true,
@@ -302,6 +303,18 @@ function RoomSettingsForm({ settings, onChange, compact = false }) {
         </button>
       </div>
 
+      <div className="switch-row">
+        <span>Боты разговаривают</span>
+        <button
+          className={settings.botTalk ? "switch on" : "switch"}
+          type="button"
+          aria-pressed={settings.botTalk}
+          onClick={() => update({ botTalk: !settings.botTalk })}
+        >
+          <span />
+        </button>
+      </div>
+
       <div className="segmented" role="group" aria-label="Тип общения">
         <button
           className={settings.communication === "text" ? "active" : ""}
@@ -461,6 +474,7 @@ function SettingsSummary({ room }) {
       <span>Мест: {room.settings.capacity}</span>
       <span>{room.settings.autoHost ? "Автоматический ведущий" : "Ведущий управляет фазами"}</span>
       <span>{room.settings.communication === "voice" ? "Голосовой чат" : "Текстовый чат"}</span>
+      <span>{room.settings.botTalk ? "Боты участвуют в обсуждении" : "Боты молчат в обсуждении"}</span>
       <span>Роли: {formatRoleCounts(room.roleCounts, room.roleMeta)}</span>
     </div>
   );
@@ -516,7 +530,7 @@ function GameView({ room, emit, onLeave }) {
         </aside>
       </div>
 
-      {room.winner ? <VictoryModal room={room} /> : null}
+      {room.winner ? <VictoryModal room={room} onLeave={onLeave} /> : null}
     </section>
   );
 }
@@ -628,6 +642,8 @@ function ActionPanel({ room, emit }) {
           <p>Выберите цель на игровом столе.</p>
         ) : room.phase === "night" ? (
           <p>Дождитесь действий ночных ролей.</p>
+        ) : room.phase === "night_wait" || room.phase === "roles" ? (
+          <p>Ночь начнется только когда создатель комнаты нажмет кнопку управления.</p>
         ) : room.phase === "voting" ? (
           <p>Голосование открыто. Голос можно отдать один раз.</p>
         ) : room.phase === "morning" && room.lastNightResult ? (
@@ -650,6 +666,20 @@ function ActionPanel({ room, emit }) {
 }
 
 function HostPanel({ room, emit }) {
+  const labelByPhase = {
+    roles: "Начать ночь",
+    night_wait: "Начать ночь",
+    night: "Завершить ночь",
+    morning: "К обсуждению",
+    discussion: "Скипнуть обсуждение",
+    voting: "Завершить голосование"
+  };
+  const helperByPhase = {
+    roles: "Игроки видят свои роли. Ночь начнется только по вашей команде.",
+    night_wait: "Город ждет. Нажмите, когда пора начинать ночь.",
+    discussion: "Можно досрочно завершить обсуждение и открыть голосование."
+  };
+
   return (
     <section className="tool-panel">
       <div className="panel-title">
@@ -657,8 +687,9 @@ function HostPanel({ room, emit }) {
         <span>Управление</span>
       </div>
       <button className="secondary-action" onClick={() => emit("advancePhase")}>
-        <Play size={18} /> Следующая фаза
+        <Play size={18} /> {labelByPhase[room.phase] || "Следующая фаза"}
       </button>
+      {helperByPhase[room.phase] ? <div className="muted-box host-hint">{helperByPhase[room.phase]}</div> : null}
       {!room.settings.autoHost ? <div className="muted-box">В ручном режиме создатель видит роли игроков и двигает фазы.</div> : null}
     </section>
   );
@@ -719,13 +750,16 @@ function EventPanel({ room }) {
   );
 }
 
-function VictoryModal({ room }) {
+function VictoryModal({ room, onLeave }) {
   return (
     <div className="modal-backdrop">
       <div className={`victory-modal ${room.winner.team}`}>
         <Sparkles size={34} />
         <h2>{room.winner.title}</h2>
         <p>{room.winner.text}</p>
+        <button className="primary-action victory-exit" onClick={onLeave}>
+          <DoorOpen size={18} /> В главное меню
+        </button>
         <div className="reveal-grid">
           {room.players.map((player) => (
             <div key={player.id} className="reveal-item">

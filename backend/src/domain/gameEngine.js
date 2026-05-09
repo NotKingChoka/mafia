@@ -8,6 +8,7 @@ const MAX_CHAT = 160;
 const PHASE_LABELS = {
   lobby: "Лобби",
   roles: "Раздача ролей",
+  night_wait: "Ожидание ночи",
   night: "Ночь",
   morning: "Утро",
   discussion: "Обсуждение",
@@ -16,7 +17,8 @@ const PHASE_LABELS = {
 };
 
 const PHASE_DURATIONS = {
-  roles: Number(process.env.ROLE_PHASE_SECONDS || 18),
+  roles: 0,
+  night_wait: 0,
   night: Number(process.env.NIGHT_PHASE_SECONDS || 80),
   morning: Number(process.env.MORNING_PHASE_SECONDS || 24),
   discussion: Number(process.env.DISCUSSION_PHASE_SECONDS || 120),
@@ -39,6 +41,17 @@ const BOT_NAMES = [
   "Север",
   "Ада",
   "Бруно"
+];
+
+const BOT_PHRASES = [
+  "Я бы присмотрелся к {target}. Слишком спокойно сидит.",
+  "{target} сейчас звучит подозрительно.",
+  "Не спешите голосовать. Кто-то явно ведет город не туда.",
+  "Мне кажется, мафия пытается спрятаться в тишине.",
+  "{target}, объясни свою позицию подробнее.",
+  "После этой ночи надо сравнить, кто как голосовал.",
+  "Я пока не уверен, но один игрок явно меняет версию.",
+  "Давайте без хаоса: сначала факты, потом обвинения."
 ];
 
 export function createGameEngine(io) {
@@ -289,6 +302,8 @@ export function createGameEngine(io) {
       lastVoteResult: null,
       winner: null,
       timer: null,
+      botTalkTimer: null,
+      botTalkStarter: null,
       createdAt: Date.now()
     };
   }
@@ -339,6 +354,17 @@ export function createGameEngine(io) {
       runBotNightActions(room);
     }
 
+    if (phase === "night_wait") {
+      room.activeSpeakerId = null;
+      addEvent(room, "Создатель решает, когда начнется следующая ночь.");
+      addChat(room, {
+        type: "system",
+        channel: "alive",
+        playerName: "Система",
+        text: "Город замер. Ночь начнется только по команде создателя комнаты."
+      });
+    }
+
     if (phase === "morning") {
       room.activeSpeakerId = getFirstAlive(room)?.id || null;
     }
@@ -352,6 +378,7 @@ export function createGameEngine(io) {
         playerName: "Система",
         text: "Началось обсуждение."
       });
+      startBotTalk(room);
     }
 
     if (phase === "voting") {
@@ -385,7 +412,7 @@ export function createGameEngine(io) {
 
   function advanceRoomPhase(room, reason) {
     if (room.phase === "finished") return;
-    if (room.phase === "roles") {
+    if (room.phase === "roles" || room.phase === "night_wait") {
       startPhase(room, "night");
       return;
     }
@@ -532,7 +559,7 @@ export function createGameEngine(io) {
       return;
     }
     room.round += 1;
-    startPhase(room, "night");
+    startPhase(room, "night_wait");
   }
 
   function checkVictory(room) {
@@ -628,6 +655,55 @@ export function createGameEngine(io) {
       const target = randomAlive(room, (player) => player.id !== bot.id);
       if (target) room.votes[bot.id] = target.id;
     }
+  }
+
+  function startBotTalk(room) {
+    if (!room.settings.botTalk) return;
+    const bots = room.players.filter((player) => player.isBot && player.alive);
+    if (!bots.length) return;
+    room.botTalkStarter = setTimeout(() => botTalkTick(room), 1600);
+    room.botTalkTimer = setInterval(() => botTalkTick(room), 7200);
+    room.botTalkStarter.unref?.();
+    room.botTalkTimer.unref?.();
+  }
+
+  function botTalkTick(room) {
+    if (room.phase !== "discussion" || !room.settings.botTalk) {
+      clearBotTalkTimer(room);
+      return;
+    }
+
+    const bot = randomAlive(room, (player) => player.isBot);
+    if (!bot) {
+      clearBotTalkTimer(room);
+      return;
+    }
+
+    room.players.forEach((player) => {
+      if (player.isBot) player.speaking = false;
+    });
+    bot.speaking = true;
+    room.activeSpeakerId = bot.id;
+    addChat(room, {
+      type: "player",
+      channel: "alive",
+      playerId: bot.id,
+      playerName: bot.name,
+      text: createBotPhrase(room, bot)
+    });
+    emitRoom(room);
+
+    setTimeout(() => {
+      if (room.phase !== "discussion") return;
+      bot.speaking = false;
+      emitRoom(room);
+    }, 2600).unref?.();
+  }
+
+  function createBotPhrase(room, bot) {
+    const target = randomAlive(room, (player) => player.id !== bot.id);
+    const phrase = BOT_PHRASES[Math.floor(Math.random() * BOT_PHRASES.length)];
+    return phrase.replace("{target}", target?.name || "кто-то");
   }
 
   function emitRoom(room) {
@@ -903,6 +979,7 @@ export function createGameEngine(io) {
       capacity,
       autoHost: input.autoHost !== false,
       communication: input.communication === "voice" ? "voice" : "text",
+      botTalk: Boolean(input.botTalk),
       roles: {
         civilian: true,
         mafia: true,
@@ -960,6 +1037,14 @@ export function createGameEngine(io) {
   function clearRoomTimer(room) {
     if (room.timer) clearTimeout(room.timer);
     room.timer = null;
+    clearBotTalkTimer(room);
+  }
+
+  function clearBotTalkTimer(room) {
+    if (room.botTalkTimer) clearInterval(room.botTalkTimer);
+    if (room.botTalkStarter) clearTimeout(room.botTalkStarter);
+    room.botTalkTimer = null;
+    room.botTalkStarter = null;
   }
 
   function emitError(socket, message) {

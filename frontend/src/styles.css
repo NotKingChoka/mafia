@@ -33,6 +33,7 @@ body {
   min-width: 320px;
   background: var(--bg);
   color: var(--text);
+  scroll-behavior: smooth;
 }
 
 button,
@@ -610,7 +611,9 @@ input[type="range"] {
 }
 
 .game-layout {
-  width: min(1680px, calc(100vw - 24px));
+  width: 100%;
+  min-height: 100vh;
+  padding: 54px 14px 14px;
 }
 
 .game-topbar {
@@ -644,20 +647,47 @@ input[type="range"] {
 }
 
 .game-main {
-  display: grid;
-  grid-template-columns: minmax(260px, 320px) minmax(540px, 1fr) minmax(300px, 360px);
-  gap: 14px;
-  align-items: start;
+  position: relative;
+  min-height: calc(100vh - 92px);
 }
 
 .side-panel {
+  position: absolute;
+  top: 14px;
+  bottom: 14px;
+  z-index: 14;
   display: grid;
+  align-content: start;
   gap: 12px;
+  width: min(340px, 23vw);
+  overflow: auto;
+  scrollbar-width: thin;
+  animation: panelSlideIn 420ms ease both;
+}
+
+.left-side {
+  left: 14px;
+}
+
+.chat-side {
+  right: 14px;
+  animation-delay: 80ms;
 }
 
 .tool-panel {
   padding: 14px;
   min-width: 0;
+  background: linear-gradient(180deg, rgba(24, 18, 18, 0.86), rgba(8, 7, 8, 0.74));
+  transition:
+    transform 220ms ease,
+    border-color 220ms ease,
+    background 220ms ease,
+    box-shadow 220ms ease;
+}
+
+.tool-panel:hover {
+  transform: translateY(-1px);
+  border-color: rgba(241, 207, 136, 0.3);
 }
 
 .role-card {
@@ -732,19 +762,36 @@ input[type="range"] {
 .table-stage {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
-  min-height: 430px;
+  height: calc(100vh - 92px);
+  min-height: 620px;
   border: 1px solid rgba(236, 194, 111, 0.2);
   border-radius: 8px;
   overflow: hidden;
   background: #060505;
   box-shadow: 0 28px 120px rgba(0, 0, 0, 0.54);
+  animation: tableEnter 520ms ease both;
+  transition:
+    box-shadow 600ms ease,
+    border-color 600ms ease,
+    filter 600ms ease;
+}
+
+.table-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 700ms ease;
+  background: rgba(2, 3, 9, 0.48);
 }
 
 .table-stage::after {
   content: "";
   position: absolute;
   inset: 0;
+  z-index: 2;
   pointer-events: none;
   background:
     radial-gradient(ellipse at center, transparent 40%, rgba(0, 0, 0, 0.58) 100%),
@@ -756,10 +803,32 @@ input[type="range"] {
   height: 100%;
   display: block;
   object-fit: cover;
+  transform: scale(1.03);
+  transition:
+    transform 900ms ease,
+    filter 900ms ease;
+}
+
+.phase-night .table-stage::before {
+  opacity: 0.72;
+}
+
+.phase-night_wait .table-stage::before,
+.phase-roles .table-stage::before {
+  opacity: 0.34;
+}
+
+.phase-morning .table-image {
+  filter: brightness(1.1) saturate(1.05);
+}
+
+.phase-night .table-image {
+  filter: brightness(0.72) saturate(0.84);
+  transform: scale(1.06);
 }
 
 .seat-card {
-  --seat-w: clamp(82px, 8.8vw, 122px);
+  --seat-w: clamp(78px, 6.3vw, 118px);
   position: absolute;
   z-index: 3;
   width: var(--seat-w);
@@ -773,11 +842,14 @@ input[type="range"] {
   padding: 7px;
   background: rgba(12, 10, 10, 0.84);
   box-shadow: 0 14px 42px rgba(0, 0, 0, 0.44);
+  animation: seatIn 420ms ease both;
   transition:
-    opacity 180ms ease,
-    filter 180ms ease,
-    transform 180ms ease,
-    box-shadow 180ms ease;
+    opacity 260ms ease,
+    filter 260ms ease,
+    transform 260ms ease,
+    box-shadow 260ms ease,
+    border-color 260ms ease,
+    background 260ms ease;
 }
 
 .seat-card.me {
@@ -785,6 +857,7 @@ input[type="range"] {
 }
 
 .seat-card.speaking {
+  transform: translate(-50%, -50%) scale(1.04);
   box-shadow:
     0 0 0 2px rgba(85, 210, 141, 0.34),
     0 0 28px rgba(85, 210, 141, 0.42),
@@ -886,6 +959,15 @@ input[type="range"] {
   color: #fff4e4;
   font-size: 11px;
   cursor: pointer;
+  transition:
+    transform 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.seat-action:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 8px 20px rgba(148, 29, 37, 0.24);
 }
 
 .seat-action.selected {
@@ -914,7 +996,7 @@ input[type="range"] {
 .chat-messages {
   display: grid;
   gap: 8px;
-  max-height: 310px;
+  max-height: min(34vh, 310px);
   overflow: auto;
   padding-right: 4px;
 }
@@ -923,6 +1005,7 @@ input[type="range"] {
   border-radius: 8px;
   padding: 9px 10px;
   background: rgba(0, 0, 0, 0.22);
+  animation: messageIn 240ms ease both;
 }
 
 .chat-message.system {
@@ -1012,6 +1095,11 @@ input[type="range"] {
   color: #dfc9ae;
 }
 
+.victory-exit {
+  width: min(240px, 100%);
+  margin: 6px auto 8px;
+}
+
 .reveal-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
@@ -1044,6 +1132,50 @@ input[type="range"] {
   display: none;
 }
 
+@keyframes tableEnter {
+  from {
+    opacity: 0;
+    transform: scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes panelSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes seatIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -44%) scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@keyframes messageIn {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 1160px) {
   .home-grid,
   .lobby-grid,
@@ -1057,15 +1189,28 @@ input[type="range"] {
   }
 
   .game-main {
+    display: grid;
+    grid-template-columns: 1fr;
     gap: 12px;
+    min-height: auto;
   }
 
   .left-side {
+    position: static;
+    width: auto;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   }
 
   .chat-side {
+    position: static;
+    width: auto;
     grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  }
+
+  .table-stage {
+    height: auto;
+    aspect-ratio: 16 / 9;
+    min-height: 430px;
   }
 }
 
