@@ -984,6 +984,7 @@ input[type="range"] {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 10px;
   margin-top: 10px;
   border: 1px solid rgba(85, 210, 141, 0.24);
@@ -1003,6 +1004,27 @@ input[type="range"] {
 .speaker-card strong {
   color: #ffffff;
   font-variant-numeric: tabular-nums;
+}
+
+.speaker-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.speaker-finish {
+  min-height: 30px;
+  border: 1px solid rgba(241, 207, 136, 0.3);
+  border-radius: 7px;
+  padding: 0 10px;
+  color: #241308;
+  background: linear-gradient(180deg, rgba(241, 207, 136, 0.96), rgba(161, 91, 35, 0.94));
+  cursor: pointer;
+}
+
+.speaker-finish:hover {
+  box-shadow: 0 8px 20px rgba(215, 173, 98, 0.2);
 }
 
 .vote-table {

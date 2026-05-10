@@ -295,6 +295,17 @@ export function createGameEngine(io) {
       }
     });
 
+    socket.on("finishSpeech", (payload = {}) => {
+      try {
+        const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
+        finishSpeech(room, player);
+        emitRoom(room);
+      } catch (error) {
+        emitError(socket, error.message);
+      }
+    });
+
     socket.on("leaveRoom", (payload = {}) => {
       try {
         const { room, player } = getActor(payload, socket);
@@ -911,6 +922,20 @@ export function createGameEngine(io) {
     if (room.phase !== "discussion") return;
     clearBotTalkTimer(room);
     activateSpeaker(room, room.speakerIndex + 1);
+  }
+
+  function finishSpeech(room, actor) {
+    if (room.phase !== "discussion") throw new Error("Закончить речь можно только во время обсуждения.");
+    if (!actor.alive) throw new Error("Мертвый игрок не может заканчивать речь.");
+    if (room.activeSpeakerId !== actor.id) throw new Error("Закончить речь может только текущий говорящий.");
+    addEvent(room, `${actor.name} закончил речь.`);
+    addChat(room, {
+      type: "system",
+      channel: "alive",
+      playerName: "Система",
+      text: `${actor.name} закончил речь.`
+    });
+    advanceSpeaker(room);
   }
 
   function passSpeaker(room, actor, targetId) {

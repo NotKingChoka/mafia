@@ -903,7 +903,7 @@ function ActionPanel({ room, emit }) {
           <p>Партия готовится к следующей фазе.</p>
         )}
       </div>
-      {room.discussionTurn ? <SpeakerTurnCard room={room} /> : null}
+      {room.discussionTurn ? <SpeakerTurnCard room={room} emit={emit} /> : null}
       {room.lastVoteResult ? <div className="result-box">{room.lastVoteResult.text}</div> : null}
       {room.voteState?.rows?.length ? <VoteTable rows={room.voteState.rows} title="Ход голосования" /> : null}
       {room.lastVoteResult?.rows?.length ? <VoteTable rows={room.lastVoteResult.rows} title="Итоги голосования" /> : null}
@@ -917,7 +917,7 @@ function ActionPanel({ room, emit }) {
   );
 }
 
-function SpeakerTurnCard({ room }) {
+function SpeakerTurnCard({ room, emit }) {
   const turn = room.discussionTurn;
   if (!turn) return null;
   return (
@@ -925,7 +925,14 @@ function SpeakerTurnCard({ room }) {
       <span>
         Говорит {turn.activeSpeakerName} · {turn.index + 1}/{turn.total}
       </span>
-      <SpeakerTimer turn={turn} />
+      <div className="speaker-actions">
+        <SpeakerTimer turn={turn} />
+        {turn.canPassSpeaker ? (
+          <button className="speaker-finish" type="button" onClick={() => emit("finishSpeech")}>
+            Закончить речь
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
