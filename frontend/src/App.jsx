@@ -38,7 +38,7 @@ const SOCKET_URL =
     ? "http://localhost:4000"
     : window.location.origin);
 const STORAGE_KEY = "mafia-online-session";
-const AVATAR_OPTIONS = Array.from({ length: 21 }, (_, index) => `/avatars/avatar-${String(index + 1).padStart(2, "0")}.png`);
+const AVATAR_OPTIONS = Array.from({ length: 10 }, (_, index) => `/avatars/avatar-${String(index + 1).padStart(2, "0")}.png`);
 
 const defaultSettings = {
   capacity: 10,

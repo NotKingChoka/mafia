@@ -52,7 +52,7 @@ const BOT_NAMES = [
   "Бруно"
 ];
 
-const BOT_AVATARS = Array.from({ length: 21 }, (_, index) => `/avatars/avatar-${String(index + 1).padStart(2, "0")}.png`);
+const BOT_AVATARS = Array.from({ length: 10 }, (_, index) => `/avatars/avatar-${String(index + 1).padStart(2, "0")}.png`);
 
 const BOT_PHRASES = [
   "Я бы присмотрелся к {target}. Слишком спокойно сидит.",
