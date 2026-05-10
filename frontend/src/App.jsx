@@ -372,7 +372,7 @@ function RoomSettingsForm({ settings, onChange, compact = false }) {
         <span>Мест: {settings.capacity}</span>
         <input
           type="range"
-          min="5"
+          min="1"
           max="15"
           value={settings.capacity}
           onChange={(event) => update({ capacity: Number(event.target.value) })}
@@ -897,6 +897,8 @@ function ActionPanel({ room, emit }) {
           <p>Голосование открыто. Голос можно отдать один раз.</p>
         ) : room.phase === "morning" && room.lastNightResult ? (
           <p>{room.lastNightResult.text}</p>
+        ) : room.phase === "discussion" && room.round <= 2 ? (
+          <p>Обсуждение идет. В первые два дня голосования нет, после круга речи город сразу перейдет к ночи.</p>
         ) : room.phase === "discussion" ? (
           <p>Обсуждение идет. Активный говорящий подсвечен за столом.</p>
         ) : (
@@ -904,6 +906,12 @@ function ActionPanel({ room, emit }) {
         )}
       </div>
       {room.discussionTurn ? <SpeakerTurnCard room={room} emit={emit} /> : null}
+      {room.phase === "voting" && room.viewer.alive && !room.voteState?.hasVoted ? (
+        <button className="ghost-action abstain-action" type="button" onClick={() => emit("abstainVote")}>
+          <Vote size={18} /> Воздержаться
+        </button>
+      ) : null}
+      {room.voteState?.abstained ? <div className="muted-box vote-note">Вы воздержались от голосования.</div> : null}
       {room.lastVoteResult ? <div className="result-box">{room.lastVoteResult.text}</div> : null}
       {room.voteState?.rows?.length ? <VoteTable rows={room.voteState.rows} title="Ход голосования" /> : null}
       {room.lastVoteResult?.rows?.length ? <VoteTable rows={room.lastVoteResult.rows} title="Итоги голосования" /> : null}
@@ -955,7 +963,7 @@ function VoteTable({ rows, title }) {
     <div className="vote-table">
       <strong>{title}</strong>
       {rows.map((row) => (
-        <div className={row.skipped ? "vote-row skipped" : "vote-row"} key={`${row.voterId}-${row.index}`}>
+        <div className={row.skipped || row.abstained ? "vote-row skipped" : "vote-row"} key={`${row.voterId}-${row.index}`}>
           <span>{row.voterName}</span>
           <span>{row.targetName}</span>
         </div>
@@ -1003,6 +1011,7 @@ function ChatPanel({ room, emit }) {
   const [text, setText] = useState("");
   const [channel, setChannel] = useState("alive");
   const scrollRef = useRef(null);
+  const lastTypingRef = useRef(0);
   const canUseMafia = room.phase === "night" && room.viewer.alive && isMafiaRoleClient(room.myRole);
   const canUseDead = !room.viewer.alive || room.phase === "finished";
   const channels = [
@@ -1012,6 +1021,7 @@ function ChatPanel({ room, emit }) {
   ];
   const activeChannel = channels.some((item) => item.id === channel) ? channel : "alive";
   const messages = room.chat.filter((message) => (message.channel || "alive") === activeChannel || message.type === "system");
+  const typingUsers = (room.typing || []).filter((item) => item.channel === activeChannel);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
@@ -1020,8 +1030,22 @@ function ChatPanel({ room, emit }) {
   function send(event) {
     event.preventDefault();
     if (!text.trim()) return;
+    emit("chatTyping", { typing: false, channel: activeChannel });
     emit("sendChat", { text, channel: activeChannel });
     setText("");
+  }
+
+  function updateText(value) {
+    setText(value);
+    const now = Date.now();
+    if (!value.trim()) {
+      emit("chatTyping", { typing: false, channel: activeChannel });
+      return;
+    }
+    if (now - lastTypingRef.current > 900) {
+      lastTypingRef.current = now;
+      emit("chatTyping", { typing: true, channel: activeChannel });
+    }
   }
 
   return (
@@ -1045,8 +1069,15 @@ function ChatPanel({ room, emit }) {
           </div>
         ))}
       </div>
+      {typingUsers.length ? <div className="typing-line">{formatTypingUsers(typingUsers)}</div> : null}
       <form className="chat-form" onSubmit={send}>
-        <input value={text} maxLength={600} onChange={(event) => setText(event.target.value)} placeholder="Сообщение" />
+        <input
+          value={text}
+          maxLength={600}
+          onBlur={() => emit("chatTyping", { typing: false, channel: activeChannel })}
+          onChange={(event) => updateText(event.target.value)}
+          placeholder="Сообщение"
+        />
         <button className="icon-button" title="Отправить">
           <Send size={18} />
         </button>
@@ -1177,7 +1208,9 @@ function AmbientBackdrop() {
 
 function getNightButton(room, player, emit) {
   const action = room.availableNightAction;
-  if (!action || !player.alive || player.id === room.viewer.id) return null;
+  if (!action || !player.alive) return null;
+  if (action.allowedTargetIds && !action.allowedTargetIds.includes(player.id)) return null;
+  if (player.id === room.viewer.id && action.action !== "heal") return null;
   if (action.action === "kill" && player.role && (player.role === "mafia" || player.role === "don")) return null;
   const selected = action.selectedTargetId === player.id;
   const icons = {
@@ -1201,7 +1234,7 @@ function getNightButton(room, player, emit) {
 function getVoteButton(room, player, emit) {
   if (room.phase !== "voting" || !room.viewer.alive || !player.alive || player.id === room.viewer.id) return null;
   const selected = room.voteState?.votedTargetId === player.id;
-  if (room.voteState?.votedTargetId && !selected) return null;
+  if (room.voteState?.hasVoted && !selected) return null;
   return {
     label: selected ? "Голос отдан" : "Голос",
     selected,
@@ -1245,6 +1278,12 @@ function formatRoleCounts(counts, roleMeta) {
   return Object.entries(counts)
     .map(([role, count]) => `${roleMeta[role]?.title || role}: ${count}`)
     .join(", ");
+}
+
+function formatTypingUsers(users) {
+  const names = users.slice(0, 2).map((user) => user.name).join(", ");
+  const extra = users.length > 2 ? ` и еще ${users.length - 2}` : "";
+  return `${names}${extra} ${users.length === 1 ? "пишет" : "пишут"}...`;
 }
 
 function getRoleBalanceWarning(playerCount, countsInput = {}) {

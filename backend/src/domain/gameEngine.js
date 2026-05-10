@@ -33,6 +33,8 @@ const DEFAULT_PHASE_DURATIONS = {
   morning: PHASE_DURATIONS.morning
 };
 const DEFAULT_SPEAKER_DURATION = 90;
+const ABSTAIN_VOTE = "__abstain__";
+const TYPING_TTL_MS = 2600;
 
 const BOT_NAMES = [
   "Барон",
@@ -230,6 +232,18 @@ export function createGameEngine(io) {
       }
     });
 
+    socket.on("abstainVote", (payload = {}) => {
+      try {
+        const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
+        handleAbstainVote(room, player);
+        emitRoom(room);
+        tryResolveVoting(room);
+      } catch (error) {
+        emitError(socket, error.message);
+      }
+    });
+
     socket.on("skipVoting", (payload = {}) => {
       try {
         const { room, player } = getActor(payload, socket);
@@ -248,6 +262,7 @@ export function createGameEngine(io) {
         const text = String(payload.text || "").trim().slice(0, 600);
         if (!text) return;
         const channel = normalizeChatChannel(room, player, payload.channel);
+        clearTyping(player);
         addChat(room, {
           type: "player",
           channel,
@@ -255,6 +270,17 @@ export function createGameEngine(io) {
           playerName: player.name,
           text
         });
+        emitRoom(room);
+      } catch (error) {
+        emitError(socket, error.message);
+      }
+    });
+
+    socket.on("chatTyping", (payload = {}) => {
+      try {
+        const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
+        updateTyping(room, player, payload);
         emitRoom(room);
       } catch (error) {
         emitError(socket, error.message);
@@ -350,6 +376,8 @@ export function createGameEngine(io) {
       player.socketId = null;
       player.micOn = false;
       player.speaking = false;
+      clearTyping(player);
+      clearTyping(player);
       addEvent(room, `${player.name} потерял соединение.`);
       emitRoom(room);
     });
@@ -386,6 +414,8 @@ export function createGameEngine(io) {
       botTalkTimer: null,
       botTalkStarter: null,
       botTalkInFlight: false,
+      doctorLastHeals: {},
+      doctorSelfHeals: {},
       createdAt: Date.now()
     };
   }
@@ -401,6 +431,7 @@ export function createGameEngine(io) {
       player.speaking = false;
       player.micOn = false;
       player.kicked = false;
+      clearTyping(player);
       touchPlayer(player);
     });
     room.round = 1;
@@ -411,6 +442,8 @@ export function createGameEngine(io) {
     room.winner = null;
     room.votes = {};
     room.votingOrder = [];
+    room.doctorLastHeals = {};
+    room.doctorSelfHeals = {};
     room.activeSpeakerId = null;
     room.activeSpeakerStartedAt = 0;
     room.activeSpeakerDuration = 0;
@@ -520,7 +553,7 @@ export function createGameEngine(io) {
       return;
     }
     if (room.phase === "discussion") {
-      startPhase(room, "voting");
+      finishDiscussion(room);
       return;
     }
     if (room.phase === "voting") {
@@ -565,6 +598,7 @@ export function createGameEngine(io) {
 
     if (payload.action === "heal") {
       if (player.role !== "doctor") throw new Error("Лечить может только доктор.");
+      validateDoctorTarget(room, player, target);
       room.actions.doctor[player.id] = target.id;
       addPrivate(room, player.id, `Вы лечите игрока: ${target.name}.`);
       return;
@@ -589,6 +623,22 @@ export function createGameEngine(io) {
       at: Date.now()
     });
     addEvent(room, `${player.name} проголосовал.`);
+  }
+
+  function handleAbstainVote(room, player) {
+    if (room.phase !== "voting") throw new Error("Сейчас не идет голосование.");
+    if (!player.alive) throw new Error("Мертвый игрок не может голосовать.");
+    if (room.votes[player.id]) throw new Error("Вы уже проголосовали.");
+    room.votes[player.id] = ABSTAIN_VOTE;
+    room.votingOrder.push({
+      voterId: player.id,
+      voterName: player.name,
+      targetId: null,
+      targetName: "Воздержался",
+      abstained: true,
+      at: Date.now()
+    });
+    addEvent(room, `${player.name} воздержался от голосования.`);
   }
 
   function tryResolveNight(room) {
@@ -657,6 +707,7 @@ export function createGameEngine(io) {
     }
 
     room.lastNightResult = { text, killedId, killedIds };
+    rememberDoctorHeals(room);
     addEvent(room, text);
     addChat(room, {
       type: "system",
@@ -675,7 +726,7 @@ export function createGameEngine(io) {
   function resolveVoting(room) {
     if (room.phase !== "voting") return;
     clearRoomTimer(room);
-    const targetId = getMajorityTarget(Object.values(room.votes), true);
+    const targetId = getMajorityTarget(Object.values(room.votes).filter((targetId) => targetId !== ABSTAIN_VOTE), true);
     const target = targetId ? room.players.find((player) => player.id === targetId) : null;
     const rows = getVoteRows(room);
     let text = "Голосование закончилось без изгнания.";
@@ -734,6 +785,32 @@ export function createGameEngine(io) {
     }
     room.round += 1;
     startPhase(room, "night_wait");
+  }
+
+  function finishDiscussion(room) {
+    if (room.round <= 2) {
+      clearRoomTimer(room);
+      const text = `День ${room.round}: голосования нет. Город переходит к следующей ночи.`;
+      room.lastVoteResult = {
+        text,
+        votes: {},
+        rows: [],
+        eliminatedId: null,
+        skipped: true,
+        earlyDay: true
+      };
+      addEvent(room, text);
+      addChat(room, {
+        type: "system",
+        channel: "alive",
+        playerName: "Система",
+        text
+      });
+      room.round += 1;
+      startPhase(room, "night_wait");
+      return;
+    }
+    startPhase(room, "voting");
   }
 
   function checkVictory(room) {
@@ -801,6 +878,8 @@ export function createGameEngine(io) {
     room.events = [];
     room.chat = [];
     room.privateLog = {};
+    room.doctorLastHeals = {};
+    room.doctorSelfHeals = {};
     room.lastNightResult = null;
     room.lastVoteResult = null;
     room.winner = null;
@@ -811,6 +890,7 @@ export function createGameEngine(io) {
       player.ready = player.isBot;
       player.speaking = false;
       player.micOn = false;
+      clearTyping(player);
       touchPlayer(player);
     });
     addEvent(room, "Комната готова к новой партии с теми же игроками.");
@@ -847,6 +927,7 @@ export function createGameEngine(io) {
     target.connected = false;
     target.socketId = null;
     target.speaking = false;
+    clearTyping(target);
     if (room.phase === "lobby") {
       room.players = room.players.filter((player) => player.id !== target.id);
       addEvent(room, `${target.name} кикнут из комнаты.`);
@@ -882,7 +963,7 @@ export function createGameEngine(io) {
     const aliveOrder = room.speakerOrder.filter((id) => room.players.some((player) => player.id === id && player.alive));
     room.speakerOrder = aliveOrder;
     if (!aliveOrder.length || index >= aliveOrder.length) {
-      startPhase(room, "voting");
+      finishDiscussion(room);
       return;
     }
 
@@ -979,6 +1060,37 @@ export function createGameEngine(io) {
     return clamp(Number(room.settings.speakerDuration || DEFAULT_SPEAKER_DURATION), 15, 300);
   }
 
+  function validateDoctorTarget(room, doctor, target) {
+    const allowed = getDoctorHealCandidates(room, doctor).some((player) => player.id === target.id);
+    if (!allowed) {
+      if (target.id === doctor.id && room.doctorSelfHeals[doctor.id]) {
+        throw new Error("Доктор уже лечил себя в этой игре.");
+      }
+      if (room.doctorLastHeals[doctor.id] === target.id) {
+        throw new Error("Доктор не может лечить одного и того же игрока две ночи подряд.");
+      }
+      throw new Error("Доктор не может выбрать эту цель.");
+    }
+  }
+
+  function getDoctorHealCandidates(room, doctor) {
+    if (!doctor || doctor.role !== "doctor" || !doctor.alive) return [];
+    return room.players.filter((player) => {
+      if (!player.alive) return false;
+      if (room.doctorLastHeals[doctor.id] === player.id) return false;
+      if (player.id === doctor.id && room.doctorSelfHeals[doctor.id]) return false;
+      return true;
+    });
+  }
+
+  function rememberDoctorHeals(room) {
+    for (const [doctorId, targetId] of Object.entries(room.actions.doctor || {})) {
+      if (!targetId) continue;
+      room.doctorLastHeals[doctorId] = targetId;
+      if (doctorId === targetId) room.doctorSelfHeals[doctorId] = true;
+    }
+  }
+
   function runBotNightActions(room) {
     for (const bot of room.players.filter((player) => player.isBot && player.alive)) {
       if (isMafiaRole(bot.role)) {
@@ -994,7 +1106,8 @@ export function createGameEngine(io) {
         if (target) room.actions.commissioner[bot.id] = target.id;
       }
       if (bot.role === "doctor") {
-        const target = randomAlive(room);
+        const candidates = getDoctorHealCandidates(room, bot);
+        const target = candidates[Math.floor(Math.random() * candidates.length)];
         if (target) room.actions.doctor[bot.id] = target.id;
       }
     }
@@ -1157,6 +1270,7 @@ export function createGameEngine(io) {
       events: room.events,
       privateLog: room.privateLog[viewerId] || [],
       chat: filteredChat,
+      typing: getTypingUsers(room, viewer),
       lastNightResult: room.lastNightResult,
       lastVoteResult: room.lastVoteResult,
       winner: room.winner,
@@ -1185,9 +1299,12 @@ export function createGameEngine(io) {
       };
     }
     if (viewer.role === "doctor") {
+      const allowedTargets = getDoctorHealCandidates(room, viewer).map((player) => player.id);
+      if (!allowedTargets.length) return null;
       return {
         action: "heal",
         label: "Лечить",
+        allowedTargetIds: allowedTargets,
         selectedTargetId: room.actions.doctor[viewer.id] || null
       };
     }
@@ -1203,12 +1320,15 @@ export function createGameEngine(io) {
 
   function getVoteState(room, viewer) {
     if (!viewer || room.phase !== "voting") return null;
-    const counts = Object.values(room.votes).reduce((acc, targetId) => {
+    const counts = Object.values(room.votes).filter((targetId) => targetId !== ABSTAIN_VOTE).reduce((acc, targetId) => {
       acc[targetId] = (acc[targetId] || 0) + 1;
       return acc;
     }, {});
     return {
-      votedTargetId: room.votes[viewer.id] || null,
+      votedTargetId: room.votes[viewer.id] === ABSTAIN_VOTE ? null : room.votes[viewer.id] || null,
+      hasVoted: Boolean(room.votes[viewer.id]),
+      abstained: room.votes[viewer.id] === ABSTAIN_VOTE,
+      abstainCount: Object.values(room.votes).filter((targetId) => targetId === ABSTAIN_VOTE).length,
       counts,
       rows: getVoteRows(room)
     };
@@ -1232,7 +1352,7 @@ export function createGameEngine(io) {
   function getStartBlockers(room) {
     const blockers = [];
     const playerCount = room.players.length;
-    if (playerCount < 5) blockers.push("Нужно минимум 5 игроков.");
+    if (playerCount < 1) blockers.push("Нужен минимум 1 игрок.");
     if (playerCount > room.settings.capacity) blockers.push("Игроков больше, чем мест в комнате.");
     const notReady = room.players.filter((player) => !player.ready);
     if (notReady.length) blockers.push("Все игроки должны нажать «Готов».");
@@ -1248,7 +1368,7 @@ export function createGameEngine(io) {
     const mafiaDone = mafia.length === 0 || mafia.every((player) => room.actions.mafia[player.id]);
     const maniacDone = maniacs.every((player) => room.actions.maniac[player.id]);
     const commissionerDone = commissioners.every((player) => room.actions.commissioner[player.id]);
-    const doctorDone = doctors.every((player) => room.actions.doctor[player.id]);
+    const doctorDone = doctors.every((player) => room.actions.doctor[player.id] || getDoctorHealCandidates(room, player).length === 0);
     return mafiaDone && maniacDone && commissionerDone && doctorDone;
   }
 
@@ -1284,6 +1404,43 @@ export function createGameEngine(io) {
     for (const player of room.players) {
       if (player.alive && isMafiaRole(player.role)) addPrivate(room, player.id, text);
     }
+  }
+
+  function updateTyping(room, player, payload) {
+    const isTyping = Boolean(payload.typing);
+    if (!isTyping) {
+      clearTyping(player);
+      return;
+    }
+    const channel = normalizeChatChannel(room, player, payload.channel);
+    player.typingChannel = channel;
+    player.typingUntil = Date.now() + TYPING_TTL_MS;
+    if (player.typingTimer) clearTimeout(player.typingTimer);
+    player.typingTimer = setTimeout(() => {
+      clearTyping(player);
+      emitRoom(room);
+    }, TYPING_TTL_MS + 100);
+    player.typingTimer.unref?.();
+  }
+
+  function clearTyping(player) {
+    if (!player) return;
+    if (player.typingTimer) clearTimeout(player.typingTimer);
+    player.typingTimer = null;
+    player.typingUntil = 0;
+    player.typingChannel = null;
+  }
+
+  function getTypingUsers(room, viewer) {
+    const now = Date.now();
+    return room.players
+      .filter((player) => player.id !== viewer?.id && player.typingUntil > now)
+      .filter((player) => canReadChatMessage(room, viewer, { channel: player.typingChannel || "alive" }))
+      .map((player) => ({
+        id: player.id,
+        name: player.name,
+        channel: player.typingChannel || "alive"
+      }));
   }
 
   function normalizeChatChannel(room, player, requestedChannel) {
@@ -1425,6 +1582,9 @@ export function createGameEngine(io) {
       micOn: false,
       speaking: false,
       lastActiveAt: Date.now(),
+      typingUntil: 0,
+      typingChannel: null,
+      typingTimer: null,
       kicked: false
     };
   }
@@ -1446,6 +1606,9 @@ export function createGameEngine(io) {
       micOn: false,
       speaking: false,
       lastActiveAt: Date.now(),
+      typingUntil: 0,
+      typingChannel: null,
+      typingTimer: null,
       kicked: false
     };
   }
@@ -1457,7 +1620,7 @@ export function createGameEngine(io) {
   }
 
   function sanitizeSettings(input = {}) {
-    const capacity = clamp(Number(input.capacity || 10), 5, 15);
+    const capacity = clamp(Number(input.capacity || 10), 1, 15);
     return {
       capacity,
       autoHost: input.autoHost !== false,

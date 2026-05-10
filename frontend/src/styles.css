@@ -980,6 +980,11 @@ input[type="range"] {
   color: #f5d9a5;
 }
 
+.abstain-action,
+.vote-note {
+  margin-top: 10px;
+}
+
 .speaker-card {
   display: flex;
   align-items: center;
@@ -1424,6 +1429,14 @@ input[type="range"] {
   overflow-wrap: anywhere;
 }
 
+.typing-line {
+  min-height: 20px;
+  margin-top: 8px;
+  color: var(--gold-bright);
+  font-size: 12px;
+  font-style: italic;
+}
+
 .chat-form {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 42px;
@@ -1649,6 +1662,10 @@ input[type="range"] {
     width: min(100% - 20px, 100%);
   }
 
+  .game-layout {
+    padding: 14px 0 10px;
+  }
+
   .home-grid {
     gap: 18px;
     padding: 70px 0 22px;
@@ -1685,10 +1702,13 @@ input[type="range"] {
   .room-header,
   .game-topbar {
     align-items: flex-start;
+    flex-direction: column;
   }
 
   .game-topbar {
+    position: static;
     gap: 10px;
+    padding: 9px;
   }
 
   .phase-pill {
@@ -1696,7 +1716,9 @@ input[type="range"] {
   }
 
   .topbar-actions {
-    flex-shrink: 0;
+    width: 100%;
+    justify-content: space-between;
+    flex-wrap: wrap;
   }
 
   .mobile-only {
@@ -1704,8 +1726,17 @@ input[type="range"] {
   }
 
   .table-stage {
+    order: -1;
     min-height: 360px;
     aspect-ratio: 10 / 12;
+  }
+
+  .left-side {
+    order: 1;
+  }
+
+  .panel-body {
+    padding: 8px;
   }
 
   .table-image {
@@ -1714,8 +1745,8 @@ input[type="range"] {
   }
 
   .seat-card {
-    --seat-w: clamp(68px, 19vw, 82px);
-    min-height: 100px;
+    --seat-w: clamp(62px, 17.5vw, 78px);
+    min-height: 92px;
     padding: 5px;
   }
 
@@ -1732,6 +1763,21 @@ input[type="range"] {
   .seat-action {
     min-height: 25px;
     font-size: 10px;
+  }
+
+  .seat-action span {
+    display: none;
+  }
+
+  .speaker-card,
+  .vote-row,
+  .chat-form {
+    grid-template-columns: 1fr;
+  }
+
+  .speaker-actions {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .chat-side {
@@ -1778,12 +1824,12 @@ input[type="range"] {
   }
 
   .table-stage {
-    min-height: 330px;
+    min-height: 390px;
   }
 
   .seat-card {
-    --seat-w: 66px;
-    min-height: 92px;
+    --seat-w: 60px;
+    min-height: 84px;
   }
 
   .seat-name {
@@ -1793,5 +1839,16 @@ input[type="range"] {
   .life-badge {
     font-size: 9px;
     padding: 1px 6px;
+  }
+
+  .seat-avatar {
+    width: 32px;
+    height: 32px;
+  }
+
+  .vote-count {
+    width: 20px;
+    height: 20px;
+    font-size: 10px;
   }
 }
