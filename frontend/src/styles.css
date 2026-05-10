@@ -1286,6 +1286,15 @@ input[type="range"] {
   background: rgba(38, 108, 72, 0.94);
 }
 
+.seat-action.pass-action {
+  color: #241308;
+  background: linear-gradient(180deg, rgba(241, 207, 136, 0.95), rgba(161, 91, 35, 0.95));
+}
+
+.seat-action.pass-action:hover {
+  box-shadow: 0 8px 20px rgba(215, 173, 98, 0.22);
+}
+
 .vote-count {
   position: absolute;
   right: -7px;

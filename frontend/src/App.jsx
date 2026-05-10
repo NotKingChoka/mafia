@@ -798,6 +798,7 @@ function SeatCard({ player, room, emit, style }) {
   const isActive = room.activeSpeakerId === player.id || player.speaking;
   const nightAction = getNightButton(room, player, emit);
   const voteAction = getVoteButton(room, player, emit);
+  const passAction = getPassSpeakerButton(room, player, emit);
   const RoleIcon = player.role ? roleIcons[player.role] || Eye : Eye;
   const hasVotes = Boolean(room.voteState?.counts?.[player.id]);
   const canKick = room.viewer.canManage && player.id !== room.viewer.id;
@@ -830,6 +831,12 @@ function SeatCard({ player, room, emit, style }) {
         <button className={voteAction.selected ? "seat-action selected" : "seat-action"} onClick={voteAction.onClick}>
           <Vote size={13} />
           <span>{voteAction.label}</span>
+        </button>
+      ) : null}
+      {passAction ? (
+        <button className="seat-action pass-action" onClick={passAction.onClick}>
+          <Send size={13} />
+          <span>{passAction.label}</span>
         </button>
       ) : null}
       {room.voteState?.counts?.[player.id] ? <div className="vote-count">{room.voteState.counts[player.id]}</div> : null}
@@ -1195,6 +1202,17 @@ function getVoteButton(room, player, emit) {
       if (room.voteState?.votedTargetId) return;
       emit("castVote", { targetId: player.id });
     }
+  };
+}
+
+function getPassSpeakerButton(room, player, emit) {
+  const turn = room.discussionTurn;
+  if (room.phase !== "discussion" || !turn?.canPassSpeaker) return null;
+  if (!player.alive || player.id === room.viewer.id) return null;
+  if (!turn.remainingSpeakerIds?.includes(player.id)) return null;
+  return {
+    label: "Передать",
+    onClick: () => emit("passSpeaker", { targetId: player.id })
   };
 }
 

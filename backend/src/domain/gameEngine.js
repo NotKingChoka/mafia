@@ -284,6 +284,17 @@ export function createGameEngine(io) {
       }
     });
 
+    socket.on("passSpeaker", (payload = {}) => {
+      try {
+        const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
+        passSpeaker(room, player, payload.targetId);
+        emitRoom(room);
+      } catch (error) {
+        emitError(socket, error.message);
+      }
+    });
+
     socket.on("leaveRoom", (payload = {}) => {
       try {
         const { room, player } = getActor(payload, socket);
@@ -902,6 +913,33 @@ export function createGameEngine(io) {
     activateSpeaker(room, room.speakerIndex + 1);
   }
 
+  function passSpeaker(room, actor, targetId) {
+    if (room.phase !== "discussion") throw new Error("Передать слово можно только во время обсуждения.");
+    if (!actor.alive) throw new Error("Мертвый игрок не может передавать слово.");
+    if (room.activeSpeakerId !== actor.id) throw new Error("Передать слово может только текущий говорящий.");
+    const target = room.players.find((player) => player.id === targetId);
+    if (!target || !target.alive) throw new Error("Игрок для передачи слова недоступен.");
+    if (target.id === actor.id) throw new Error("Нельзя передать слово себе.");
+
+    const aliveOrder = room.speakerOrder.filter((id) => room.players.some((player) => player.id === id && player.alive));
+    const currentIndex = aliveOrder.indexOf(actor.id);
+    const targetIndex = aliveOrder.indexOf(target.id);
+    if (currentIndex < 0 || targetIndex < 0) throw new Error("Очередь обсуждения уже изменилась.");
+    if (targetIndex <= currentIndex) throw new Error("Этому игроку уже давали слово в этом круге.");
+
+    const finished = aliveOrder.slice(0, currentIndex + 1);
+    const remaining = aliveOrder.slice(currentIndex + 1).filter((id) => id !== target.id);
+    room.speakerOrder = [...finished, target.id, ...remaining];
+    addEvent(room, `${actor.name} передал слово игроку ${target.name}.`);
+    addChat(room, {
+      type: "system",
+      channel: "alive",
+      playerName: "Система",
+      text: `${actor.name} передал слово игроку ${target.name}.`
+    });
+    activateSpeaker(room, finished.length);
+  }
+
   function resetDiscussionQueue(room) {
     clearSpeakerTimer(room);
     room.activeSpeakerId = null;
@@ -1041,7 +1079,7 @@ export function createGameEngine(io) {
       phaseStartedAt: room.phaseStartedAt,
       phaseDuration: room.phaseDuration,
       activeSpeakerId: room.activeSpeakerId,
-      discussionTurn: getDiscussionTurn(room),
+      discussionTurn: getDiscussionTurn(room, viewer),
       creatorId: room.creatorId,
       hostId: room.hostId,
       canStart: getStartBlockers(room).length === 0,
@@ -1151,7 +1189,7 @@ export function createGameEngine(io) {
     };
   }
 
-  function getDiscussionTurn(room) {
+  function getDiscussionTurn(room, viewer) {
     if (room.phase !== "discussion" || !room.activeSpeakerId) return null;
     const speaker = room.players.find((player) => player.id === room.activeSpeakerId);
     return {
@@ -1159,6 +1197,8 @@ export function createGameEngine(io) {
       activeSpeakerName: speaker?.name || "",
       index: room.speakerIndex,
       total: room.speakerOrder.length,
+      remainingSpeakerIds: room.speakerOrder.slice(room.speakerIndex + 1),
+      canPassSpeaker: Boolean(viewer?.alive && viewer.id === room.activeSpeakerId),
       startedAt: room.activeSpeakerStartedAt,
       duration: room.activeSpeakerDuration
     };
