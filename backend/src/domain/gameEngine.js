@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { allocateRoles, getRoleCounts, isMafiaRole, ROLE_META } from "./roles.js";
+import { allocateRoles, getRoleBalance, getRoleCounts, isHostileRole, isMafiaRole, ROLE_META } from "./roles.js";
 import { createBotReply } from "./botBrain.js";
 
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -20,11 +20,19 @@ const PHASE_LABELS = {
 const PHASE_DURATIONS = {
   roles: 0,
   night_wait: 0,
-  night: Number(process.env.NIGHT_PHASE_SECONDS || 80),
-  morning: Number(process.env.MORNING_PHASE_SECONDS || 24),
-  discussion: Number(process.env.DISCUSSION_PHASE_SECONDS || 120),
-  voting: Number(process.env.VOTING_PHASE_SECONDS || 60)
+  night: Number(process.env.NIGHT_PHASE_SECONDS || 45),
+  morning: Number(process.env.MORNING_PHASE_SECONDS || 20),
+  discussion: Number(process.env.DISCUSSION_PHASE_SECONDS || 180),
+  voting: Number(process.env.VOTING_PHASE_SECONDS || 30)
 };
+
+const DEFAULT_PHASE_DURATIONS = {
+  night: PHASE_DURATIONS.night,
+  discussion: PHASE_DURATIONS.discussion,
+  voting: PHASE_DURATIONS.voting,
+  morning: PHASE_DURATIONS.morning
+};
+const DEFAULT_SPEAKER_DURATION = 90;
 
 const BOT_NAMES = [
   "Барон",
@@ -43,6 +51,8 @@ const BOT_NAMES = [
   "Ада",
   "Бруно"
 ];
+
+const BOT_AVATARS = Array.from({ length: 21 }, (_, index) => `/avatars/avatar-${String(index + 1).padStart(2, "0")}.png`);
 
 const BOT_PHRASES = [
   "Я бы присмотрелся к {target}. Слишком спокойно сидит.",
@@ -134,6 +144,7 @@ export function createGameEngine(io) {
     socket.on("toggleReady", (payload = {}) => {
       try {
         const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
         ensureLobby(room);
         player.ready = !player.ready;
         addEvent(room, `${player.name} ${player.ready ? "готов" : "снял готовность"}.`);
@@ -146,6 +157,7 @@ export function createGameEngine(io) {
     socket.on("updateSettings", (payload = {}) => {
       try {
         const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
         ensureLobby(room);
         ensureCreator(room, player);
         room.settings = sanitizeSettings({ ...room.settings, ...payload.settings });
@@ -163,6 +175,7 @@ export function createGameEngine(io) {
     socket.on("addBot", (payload = {}) => {
       try {
         const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
         ensureLobby(room);
         ensureCreator(room, player);
         const amount = clamp(Number(payload.count || 1), 1, 15);
@@ -182,6 +195,7 @@ export function createGameEngine(io) {
     socket.on("startGame", (payload = {}) => {
       try {
         const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
         ensureLobby(room);
         ensureCreator(room, player);
         const blockers = getStartBlockers(room);
@@ -195,6 +209,7 @@ export function createGameEngine(io) {
     socket.on("nightAction", (payload = {}) => {
       try {
         const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
         handleNightAction(room, player, payload);
         emitRoom(room);
         tryResolveNight(room);
@@ -206,6 +221,7 @@ export function createGameEngine(io) {
     socket.on("castVote", (payload = {}) => {
       try {
         const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
         handleVote(room, player, payload.targetId);
         emitRoom(room);
         tryResolveVoting(room);
@@ -217,6 +233,7 @@ export function createGameEngine(io) {
     socket.on("skipVoting", (payload = {}) => {
       try {
         const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
         ensureCreator(room, player);
         skipVoting(room);
       } catch (error) {
@@ -227,9 +244,10 @@ export function createGameEngine(io) {
     socket.on("sendChat", (payload = {}) => {
       try {
         const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
         const text = String(payload.text || "").trim().slice(0, 600);
         if (!text) return;
-        const channel = player.alive || room.phase === "lobby" ? "alive" : "dead";
+        const channel = normalizeChatChannel(room, player, payload.channel);
         addChat(room, {
           type: "player",
           channel,
@@ -246,6 +264,7 @@ export function createGameEngine(io) {
     socket.on("voiceState", (payload = {}) => {
       try {
         const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
         player.micOn = Boolean(payload.micOn);
         player.speaking = Boolean(payload.speaking) && player.micOn && player.alive;
         emitRoom(room);
@@ -257,6 +276,7 @@ export function createGameEngine(io) {
     socket.on("advancePhase", (payload = {}) => {
       try {
         const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
         ensureCreator(room, player);
         advanceRoomPhase(room, "manual");
       } catch (error) {
@@ -268,6 +288,28 @@ export function createGameEngine(io) {
       try {
         const { room, player } = getActor(payload, socket);
         leaveRoom(room, player, socket.id);
+      } catch (error) {
+        emitError(socket, error.message);
+      }
+    });
+
+    socket.on("kickPlayer", (payload = {}) => {
+      try {
+        const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
+        ensureCreator(room, player);
+        kickPlayer(room, player, payload.targetId);
+      } catch (error) {
+        emitError(socket, error.message);
+      }
+    });
+
+    socket.on("replayGame", (payload = {}) => {
+      try {
+        const { room, player } = getActor(payload, socket);
+        touchPlayer(player);
+        ensureCreator(room, player);
+        replayGame(room);
       } catch (error) {
         emitError(socket, error.message);
       }
@@ -304,8 +346,14 @@ export function createGameEngine(io) {
       phaseStartedAt: Date.now(),
       phaseDuration: 0,
       activeSpeakerId: null,
+      activeSpeakerStartedAt: 0,
+      activeSpeakerDuration: 0,
+      speakerOrder: [],
+      speakerIndex: 0,
+      speakerTimer: null,
       actions: createEmptyActions(),
       votes: {},
+      votingOrder: [],
       events: [],
       chat: [],
       privateLog: {},
@@ -330,6 +378,8 @@ export function createGameEngine(io) {
       player.voted = false;
       player.speaking = false;
       player.micOn = false;
+      player.kicked = false;
+      touchPlayer(player);
     });
     room.round = 1;
     room.privateLog = {};
@@ -337,6 +387,13 @@ export function createGameEngine(io) {
     room.lastNightResult = null;
     room.lastVoteResult = null;
     room.winner = null;
+    room.votes = {};
+    room.votingOrder = [];
+    room.activeSpeakerId = null;
+    room.activeSpeakerStartedAt = 0;
+    room.activeSpeakerDuration = 0;
+    room.speakerOrder = [];
+    room.speakerIndex = 0;
     addEvent(room, "Игра началась. Роли розданы тайно.");
     addChat(room, {
       type: "system",
@@ -351,7 +408,8 @@ export function createGameEngine(io) {
     clearRoomTimer(room);
     room.phase = phase;
     room.phaseStartedAt = Date.now();
-    room.phaseDuration = room.settings.autoHost ? PHASE_DURATIONS[phase] || 0 : 0;
+    room.phaseDuration = getPhaseDuration(room, phase);
+    if (phase !== "discussion") resetDiscussionQueue(room);
 
     if (phase === "night") {
       room.actions = createEmptyActions();
@@ -385,7 +443,6 @@ export function createGameEngine(io) {
     }
 
     if (phase === "discussion") {
-      room.activeSpeakerId = getFirstAlive(room)?.id || null;
       addEvent(room, "Началось обсуждение.");
       addChat(room, {
         type: "system",
@@ -393,11 +450,12 @@ export function createGameEngine(io) {
         playerName: "Система",
         text: "Началось обсуждение."
       });
-      startBotTalk(room);
+      startDiscussionQueue(room);
     }
 
     if (phase === "voting") {
       room.votes = {};
+      room.votingOrder = [];
       room.activeSpeakerId = null;
       addEvent(room, "Открыто голосование.");
       addChat(room, {
@@ -466,6 +524,14 @@ export function createGameEngine(io) {
       return;
     }
 
+    if (payload.action === "maniackill") {
+      if (player.role !== "maniac") throw new Error("Так действует только маньяк.");
+      if (target.id === player.id) throw new Error("Нельзя выбрать себя.");
+      room.actions.maniac[player.id] = target.id;
+      addPrivate(room, player.id, `Вы выбрали жертву: ${target.name}.`);
+      return;
+    }
+
     if (payload.action === "inspect") {
       if (player.role !== "commissioner") throw new Error("Проверять может только комиссар.");
       if (target.id === player.id) throw new Error("Комиссар не проверяет себя.");
@@ -493,6 +559,13 @@ export function createGameEngine(io) {
     if (!target || !target.alive) throw new Error("Нельзя голосовать против этой цели.");
     if (target.id === player.id) throw new Error("Нельзя голосовать против себя.");
     room.votes[player.id] = target.id;
+    room.votingOrder.push({
+      voterId: player.id,
+      voterName: player.name,
+      targetId: target.id,
+      targetName: target.name,
+      at: Date.now()
+    });
     addEvent(room, `${player.name} проголосовал.`);
   }
 
@@ -525,11 +598,13 @@ export function createGameEngine(io) {
     }
 
     const mafiaTargetId = getMajorityTarget(Object.values(room.actions.mafia));
+    const maniacTargetIds = [...new Set(Object.values(room.actions.maniac).filter(Boolean))];
     const doctorTargetId = Object.values(room.actions.doctor)[0] || null;
     const target = mafiaTargetId ? room.players.find((player) => player.id === mafiaTargetId) : null;
 
     let text = "Этой ночью никто не умер.";
     let killedId = null;
+    const killedIds = [];
     if (target && target.alive) {
       if (doctorTargetId === target.id) {
         text = "Этой ночью никто не умер. Доктор успел спасти жертву.";
@@ -537,11 +612,29 @@ export function createGameEngine(io) {
         target.alive = false;
         target.speaking = false;
         killedId = target.id;
-        text = `Этой ночью погиб ${target.name}.`;
+        killedIds.push(target.id);
+        text = formatEliminationText(room, target, "погиб этой ночью");
       }
     }
 
-    room.lastNightResult = { text, killedId };
+    for (const targetId of maniacTargetIds) {
+      const maniacTarget = room.players.find((player) => player.id === targetId);
+      if (!maniacTarget || !maniacTarget.alive || doctorTargetId === maniacTarget.id) continue;
+      maniacTarget.alive = false;
+      maniacTarget.speaking = false;
+      killedIds.push(maniacTarget.id);
+    }
+
+    if (killedIds.length > 1) {
+      const names = killedIds
+        .map((id) => room.players.find((player) => player.id === id))
+        .filter(Boolean)
+        .map((player) => formatEliminationText(room, player, "погиб"))
+        .join("; ");
+      text = `Этой ночью: ${names}.`;
+    }
+
+    room.lastNightResult = { text, killedId, killedIds };
     addEvent(room, text);
     addChat(room, {
       type: "system",
@@ -562,17 +655,19 @@ export function createGameEngine(io) {
     clearRoomTimer(room);
     const targetId = getMajorityTarget(Object.values(room.votes), true);
     const target = targetId ? room.players.find((player) => player.id === targetId) : null;
+    const rows = getVoteRows(room);
     let text = "Голосование закончилось без изгнания.";
 
     if (target && target.alive) {
       target.alive = false;
       target.speaking = false;
-      text = `${target.name} выбыл по итогам голосования.`;
+      text = formatEliminationText(room, target, "выбыл по итогам голосования");
     }
 
     room.lastVoteResult = {
       text,
       votes: { ...room.votes },
+      rows,
       eliminatedId: target?.id || null
     };
     addEvent(room, text);
@@ -599,6 +694,7 @@ export function createGameEngine(io) {
     room.lastVoteResult = {
       text,
       votes: {},
+      rows: getVoteRows(room),
       eliminatedId: null,
       skipped: true
     };
@@ -620,9 +716,18 @@ export function createGameEngine(io) {
 
   function checkVictory(room) {
     const alive = room.players.filter((player) => player.alive);
+    const maniacAlive = alive.filter((player) => player.role === "maniac").length;
+    if (maniacAlive > 0 && alive.length === maniacAlive) {
+      finishRoom(room, {
+        team: "maniac",
+        title: "Маньяк победил",
+        text: "За столом не осталось никого, кроме маньяка."
+      });
+      return true;
+    }
     const mafiaAlive = alive.filter((player) => isMafiaRole(player.role)).length;
-    const cityAlive = alive.length - mafiaAlive;
-    if (mafiaAlive === 0) {
+    const cityAlive = alive.filter((player) => !isHostileRole(player.role)).length;
+    if (mafiaAlive === 0 && maniacAlive === 0) {
       finishRoom(room, {
         team: "city",
         title: "Мирные жители победили",
@@ -630,7 +735,7 @@ export function createGameEngine(io) {
       });
       return true;
     }
-    if (mafiaAlive >= cityAlive) {
+    if (mafiaAlive >= cityAlive + maniacAlive) {
       finishRoom(room, {
         team: "mafia",
         title: "Мафия победила",
@@ -643,6 +748,7 @@ export function createGameEngine(io) {
 
   function finishRoom(room, winner) {
     clearRoomTimer(room);
+    resetDiscussionQueue(room);
     room.phase = "finished";
     room.phaseStartedAt = Date.now();
     room.phaseDuration = 0;
@@ -654,6 +760,39 @@ export function createGameEngine(io) {
       playerName: "Система",
       text: `${winner.title}. ${winner.text}`
     });
+  }
+
+  function replayGame(room) {
+    clearRoomTimer(room);
+    room.phase = "lobby";
+    room.round = 0;
+    room.phaseStartedAt = Date.now();
+    room.phaseDuration = 0;
+    room.activeSpeakerId = null;
+    room.activeSpeakerStartedAt = 0;
+    room.activeSpeakerDuration = 0;
+    room.speakerOrder = [];
+    room.speakerIndex = 0;
+    room.actions = createEmptyActions();
+    room.votes = {};
+    room.votingOrder = [];
+    room.events = [];
+    room.chat = [];
+    room.privateLog = {};
+    room.lastNightResult = null;
+    room.lastVoteResult = null;
+    room.winner = null;
+    room.players = room.players.filter((player) => !player.kicked);
+    room.players.forEach((player) => {
+      player.role = null;
+      player.alive = true;
+      player.ready = player.isBot;
+      player.speaking = false;
+      player.micOn = false;
+      touchPlayer(player);
+    });
+    addEvent(room, "Комната готова к новой партии с теми же игроками.");
+    emitRoom(room);
   }
 
   function leaveRoom(room, player, socketId) {
@@ -678,6 +817,26 @@ export function createGameEngine(io) {
     emitRoom(room);
   }
 
+  function kickPlayer(room, actor, targetId) {
+    const target = room.players.find((player) => player.id === targetId);
+    if (!target) throw new Error("Игрок не найден.");
+    if (target.id === actor.id) throw new Error("Нельзя кикнуть себя.");
+    target.kicked = true;
+    target.connected = false;
+    target.socketId = null;
+    target.speaking = false;
+    if (room.phase === "lobby") {
+      room.players = room.players.filter((player) => player.id !== target.id);
+      addEvent(room, `${target.name} кикнут из комнаты.`);
+    } else {
+      target.alive = false;
+      addEvent(room, `${target.name} кикнут создателем и выбыл из партии.`);
+      checkVictory(room);
+      if (room.phase === "discussion" && room.activeSpeakerId === target.id) advanceSpeaker(room);
+    }
+    emitRoom(room);
+  }
+
   function transferCreator(room) {
     const next = room.players.find((player) => !player.isBot) || room.players[0];
     if (!next) return;
@@ -689,11 +848,83 @@ export function createGameEngine(io) {
     addEvent(room, `${next.name} теперь создатель комнаты.`);
   }
 
+  function startDiscussionQueue(room) {
+    room.speakerOrder = room.players.filter((player) => player.alive).map((player) => player.id);
+    room.speakerIndex = 0;
+    room.activeSpeakerDuration = getSpeakerDuration(room);
+    activateSpeaker(room, 0);
+  }
+
+  function activateSpeaker(room, index) {
+    if (room.phase !== "discussion") return;
+    const aliveOrder = room.speakerOrder.filter((id) => room.players.some((player) => player.id === id && player.alive));
+    room.speakerOrder = aliveOrder;
+    if (!aliveOrder.length || index >= aliveOrder.length) {
+      startPhase(room, "voting");
+      return;
+    }
+
+    room.speakerIndex = index;
+    room.activeSpeakerId = aliveOrder[index];
+    room.activeSpeakerStartedAt = Date.now();
+    room.activeSpeakerDuration = getSpeakerDuration(room);
+    for (const player of room.players) {
+      player.speaking = player.id === room.activeSpeakerId;
+    }
+
+    const speaker = room.players.find((player) => player.id === room.activeSpeakerId);
+    if (speaker) {
+      addEvent(room, `Слово получает ${speaker.name}.`);
+      addChat(room, {
+        type: "system",
+        channel: "alive",
+        playerName: "Система",
+        text: `Сейчас говорит ${speaker.name}.`
+      });
+      queueActiveBotTalk(room);
+    }
+    scheduleSpeakerTurn(room);
+  }
+
+  function scheduleSpeakerTurn(room) {
+    clearSpeakerTimer(room);
+    if (room.phase !== "discussion" || !room.activeSpeakerId || !room.activeSpeakerDuration) return;
+    room.speakerTimer = setTimeout(() => {
+      advanceSpeaker(room);
+      emitRoom(room);
+    }, room.activeSpeakerDuration * 1000);
+    room.speakerTimer.unref?.();
+  }
+
+  function advanceSpeaker(room) {
+    if (room.phase !== "discussion") return;
+    clearBotTalkTimer(room);
+    activateSpeaker(room, room.speakerIndex + 1);
+  }
+
+  function resetDiscussionQueue(room) {
+    clearSpeakerTimer(room);
+    room.activeSpeakerId = null;
+    room.speakerOrder = [];
+    room.speakerIndex = 0;
+    room.activeSpeakerStartedAt = 0;
+    room.activeSpeakerDuration = 0;
+    for (const player of room.players) player.speaking = false;
+  }
+
+  function getSpeakerDuration(room) {
+    return clamp(Number(room.settings.speakerDuration || DEFAULT_SPEAKER_DURATION), 15, 300);
+  }
+
   function runBotNightActions(room) {
     for (const bot of room.players.filter((player) => player.isBot && player.alive)) {
       if (isMafiaRole(bot.role)) {
         const target = randomAlive(room, (player) => !isMafiaRole(player.role));
         if (target) room.actions.mafia[bot.id] = target.id;
+      }
+      if (bot.role === "maniac") {
+        const target = randomAlive(room, (player) => player.id !== bot.id);
+        if (target) room.actions.maniac[bot.id] = target.id;
       }
       if (bot.role === "commissioner") {
         const target = randomAlive(room, (player) => player.id !== bot.id);
@@ -709,18 +940,26 @@ export function createGameEngine(io) {
   function runBotVotes(room) {
     for (const bot of room.players.filter((player) => player.isBot && player.alive)) {
       const target = randomAlive(room, (player) => player.id !== bot.id);
-      if (target) room.votes[bot.id] = target.id;
+      if (target) {
+        room.votes[bot.id] = target.id;
+        room.votingOrder.push({
+          voterId: bot.id,
+          voterName: bot.name,
+          targetId: target.id,
+          targetName: target.name,
+          at: Date.now()
+        });
+      }
     }
   }
 
-  function startBotTalk(room) {
+  function queueActiveBotTalk(room) {
+    clearBotTalkTimer(room);
     if (!room.settings.botTalk) return;
-    const bots = room.players.filter((player) => player.isBot && player.alive);
-    if (!bots.length) return;
+    const bot = room.players.find((player) => player.id === room.activeSpeakerId && player.isBot && player.alive);
+    if (!bot) return;
     room.botTalkStarter = setTimeout(() => botTalkTick(room), 1600);
-    room.botTalkTimer = setInterval(() => botTalkTick(room), 7200);
     room.botTalkStarter.unref?.();
-    room.botTalkTimer.unref?.();
   }
 
   async function botTalkTick(room) {
@@ -730,7 +969,7 @@ export function createGameEngine(io) {
     }
     if (room.botTalkInFlight) return;
 
-    const bot = randomAlive(room, (player) => player.isBot);
+    const bot = room.players.find((player) => player.id === room.activeSpeakerId && player.isBot && player.alive);
     if (!bot) {
       clearBotTalkTimer(room);
       return;
@@ -751,7 +990,7 @@ export function createGameEngine(io) {
       fallbackText: createBotPhrase(room, bot)
     });
 
-    if (room.phase !== "discussion") {
+    if (room.phase !== "discussion" || room.activeSpeakerId !== bot.id) {
       bot.speaking = false;
       room.botTalkInFlight = false;
       return;
@@ -768,7 +1007,7 @@ export function createGameEngine(io) {
     emitRoom(room);
 
     setTimeout(() => {
-      if (room.phase !== "discussion") return;
+      if (room.phase !== "discussion" || room.activeSpeakerId !== bot.id) return;
       bot.speaking = false;
       emitRoom(room);
     }, 2600).unref?.();
@@ -790,10 +1029,7 @@ export function createGameEngine(io) {
   function serializeRoom(room, viewerId) {
     const viewer = room.players.find((player) => player.id === viewerId);
     const revealAllRoles = viewer?.isCreator && !room.settings.autoHost;
-    const filteredChat = room.chat.filter((message) => {
-      if (message.channel !== "dead") return true;
-      return !viewer?.alive || room.phase === "finished";
-    });
+    const filteredChat = room.chat.filter((message) => canReadChatMessage(room, viewer, message));
 
     return {
       code: room.code,
@@ -805,6 +1041,7 @@ export function createGameEngine(io) {
       phaseStartedAt: room.phaseStartedAt,
       phaseDuration: room.phaseDuration,
       activeSpeakerId: room.activeSpeakerId,
+      discussionTurn: getDiscussionTurn(room),
       creatorId: room.creatorId,
       hostId: room.hostId,
       canStart: getStartBlockers(room).length === 0,
@@ -814,6 +1051,7 @@ export function createGameEngine(io) {
           revealAllRoles ||
           player.id === viewerId ||
           room.phase === "finished" ||
+          (!player.alive && room.settings.revealRoleOnDeath) ||
           (isMafiaRole(viewer?.role) && isMafiaRole(player.role));
         return {
           id: player.id,
@@ -822,6 +1060,8 @@ export function createGameEngine(io) {
           ready: player.ready,
           alive: player.alive,
           connected: player.connected,
+          afk: isAfk(player),
+          lastActiveAt: player.lastActiveAt,
           isCreator: player.isCreator,
           isHost: room.hostId === player.id,
           isBot: player.isBot,
@@ -847,8 +1087,10 @@ export function createGameEngine(io) {
       myRole: viewer?.role || null,
       roleMeta: ROLE_META,
       roleCounts: room.phase === "lobby" ? getRoleCounts(room.settings.capacity, room.settings.roles) : null,
+      roleBalance: room.phase === "lobby" ? getRoleBalance(room.settings.capacity, room.settings.roles) : null,
       availableNightAction: getAvailableNightAction(room, viewer),
       voteState: getVoteState(room, viewer),
+      gameStats: getGameStats(room),
       events: room.events,
       privateLog: room.privateLog[viewerId] || [],
       chat: filteredChat,
@@ -886,6 +1128,13 @@ export function createGameEngine(io) {
         selectedTargetId: room.actions.doctor[viewer.id] || null
       };
     }
+    if (viewer.role === "maniac") {
+      return {
+        action: "maniackill",
+        label: "Убить",
+        selectedTargetId: room.actions.maniac[viewer.id] || null
+      };
+    }
     return null;
   }
 
@@ -897,7 +1146,21 @@ export function createGameEngine(io) {
     }, {});
     return {
       votedTargetId: room.votes[viewer.id] || null,
-      counts
+      counts,
+      rows: getVoteRows(room)
+    };
+  }
+
+  function getDiscussionTurn(room) {
+    if (room.phase !== "discussion" || !room.activeSpeakerId) return null;
+    const speaker = room.players.find((player) => player.id === room.activeSpeakerId);
+    return {
+      activeSpeakerId: room.activeSpeakerId,
+      activeSpeakerName: speaker?.name || "",
+      index: room.speakerIndex,
+      total: room.speakerOrder.length,
+      startedAt: room.activeSpeakerStartedAt,
+      duration: room.activeSpeakerDuration
     };
   }
 
@@ -914,12 +1177,14 @@ export function createGameEngine(io) {
   function areNightActionsComplete(room) {
     const alive = room.players.filter((player) => player.alive);
     const mafia = alive.filter((player) => isMafiaRole(player.role));
+    const maniacs = alive.filter((player) => player.role === "maniac");
     const commissioners = alive.filter((player) => player.role === "commissioner");
     const doctors = alive.filter((player) => player.role === "doctor");
     const mafiaDone = mafia.length === 0 || mafia.every((player) => room.actions.mafia[player.id]);
+    const maniacDone = maniacs.every((player) => room.actions.maniac[player.id]);
     const commissionerDone = commissioners.every((player) => room.actions.commissioner[player.id]);
     const doctorDone = doctors.every((player) => room.actions.doctor[player.id]);
-    return mafiaDone && commissionerDone && doctorDone;
+    return mafiaDone && maniacDone && commissionerDone && doctorDone;
   }
 
   function addEvent(room, text) {
@@ -954,6 +1219,79 @@ export function createGameEngine(io) {
     for (const player of room.players) {
       if (player.alive && isMafiaRole(player.role)) addPrivate(room, player.id, text);
     }
+  }
+
+  function normalizeChatChannel(room, player, requestedChannel) {
+    if (requestedChannel === "mafia") {
+      if (room.phase !== "night") throw new Error("Чат мафии доступен ночью.");
+      if (!player.alive || !isMafiaRole(player.role)) throw new Error("Чат мафии доступен только мафии и дону.");
+      return "mafia";
+    }
+    if (requestedChannel === "dead") {
+      if (player.alive && room.phase !== "finished") throw new Error("Чат мертвых доступен только выбывшим.");
+      return "dead";
+    }
+    if (!player.alive && room.phase !== "lobby" && room.phase !== "finished") return "dead";
+    return "alive";
+  }
+
+  function canReadChatMessage(room, viewer, message) {
+    if (!viewer) return message.channel === "alive";
+    if (message.channel === "mafia") return room.phase === "finished" || isMafiaRole(viewer.role);
+    if (message.channel === "dead") return room.phase === "finished" || !viewer.alive;
+    return true;
+  }
+
+  function getVoteRows(room) {
+    const rows = room.votingOrder.map((vote, index) => ({
+      ...vote,
+      index: index + 1
+    }));
+    if (room.phase === "voting" || room.lastVoteResult) {
+      for (const player of room.players.filter((item) => item.alive)) {
+        if (!room.votes[player.id] && !rows.some((row) => row.voterId === player.id)) {
+          rows.push({
+            voterId: player.id,
+            voterName: player.name,
+            targetId: null,
+            targetName: "Пропуск",
+            skipped: true,
+            index: rows.length + 1
+          });
+        }
+      }
+    }
+    return rows;
+  }
+
+  function getGameStats(room) {
+    const deaths = room.players.filter((player) => !player.alive).length;
+    return {
+      rounds: room.round,
+      deaths,
+      alive: room.players.filter((player) => player.alive).length,
+      totalVotes: Object.keys(room.votes || {}).length,
+      winner: room.winner
+    };
+  }
+
+  function getPhaseDuration(room, phase) {
+    if (!room.settings.autoHost) return 0;
+    if (phase === "discussion") {
+      const aliveCount = room.players.filter((player) => player.alive).length;
+      const queueDuration = aliveCount * getSpeakerDuration(room);
+      const baseDuration = room.settings.phaseDurations?.discussion || PHASE_DURATIONS.discussion || 0;
+      return Math.max(baseDuration, queueDuration);
+    }
+    if (phase === "night" || phase === "discussion" || phase === "voting" || phase === "morning") {
+      return room.settings.phaseDurations?.[phase] || PHASE_DURATIONS[phase] || 0;
+    }
+    return PHASE_DURATIONS[phase] || 0;
+  }
+
+  function formatEliminationText(room, player, prefix) {
+    if (!room.settings.revealRoleOnDeath) return `${player.name} ${prefix}. Его роль не раскрывается.`;
+    return `${player.name} ${prefix}. Его роль: ${ROLE_META[player.role]?.title || "неизвестно"}.`;
   }
 
   function getActor(payload, socket) {
@@ -1001,6 +1339,7 @@ export function createGameEngine(io) {
   function createEmptyActions() {
     return {
       mafia: {},
+      maniac: {},
       commissioner: {},
       doctor: {}
     };
@@ -1019,7 +1358,9 @@ export function createGameEngine(io) {
       isBot: false,
       role: null,
       micOn: false,
-      speaking: false
+      speaking: false,
+      lastActiveAt: Date.now(),
+      kicked: false
     };
   }
 
@@ -1030,7 +1371,7 @@ export function createGameEngine(io) {
       id: `bot-${randomUUID()}`,
       socketId: null,
       name,
-      avatar: createAvatar(name),
+      avatar: BOT_AVATARS[index % BOT_AVATARS.length] || createAvatar(name),
       ready: true,
       alive: true,
       connected: true,
@@ -1038,7 +1379,9 @@ export function createGameEngine(io) {
       isBot: true,
       role: null,
       micOn: false,
-      speaking: false
+      speaking: false,
+      lastActiveAt: Date.now(),
+      kicked: false
     };
   }
 
@@ -1055,13 +1398,39 @@ export function createGameEngine(io) {
       autoHost: input.autoHost !== false,
       communication: input.communication === "voice" ? "voice" : "text",
       botTalk: Boolean(input.botTalk),
+      soundEnabled: input.soundEnabled !== false,
+      revealRoleOnDeath: input.revealRoleOnDeath !== false,
+      phaseDurations: sanitizePhaseDurations(input.phaseDurations),
+      speakerDuration: clamp(Number(input.speakerDuration || DEFAULT_SPEAKER_DURATION), 15, 300),
       roles: {
         civilian: true,
         mafia: true,
         don: input.roles?.don !== false,
         commissioner: input.roles?.commissioner !== false,
-        doctor: input.roles?.doctor !== false
+        doctor: input.roles?.doctor !== false,
+        maniac: input.roles?.maniac === true,
+        counts: sanitizeRoleCounts(input.roles?.counts, capacity)
       }
+    };
+  }
+
+  function sanitizePhaseDurations(input = {}) {
+    return {
+      night: clamp(Number(input.night || DEFAULT_PHASE_DURATIONS.night), 15, 180),
+      discussion: clamp(Number(input.discussion || DEFAULT_PHASE_DURATIONS.discussion), 30, 600),
+      voting: clamp(Number(input.voting || DEFAULT_PHASE_DURATIONS.voting), 10, 180),
+      morning: clamp(Number(input.morning || DEFAULT_PHASE_DURATIONS.morning), 5, 90)
+    };
+  }
+
+  function sanitizeRoleCounts(input = {}, capacity = 10) {
+    const balance = getRoleBalance(capacity, { counts: input });
+    return {
+      mafia: balance.counts.mafia || 1,
+      don: balance.counts.don || 0,
+      doctor: balance.counts.doctor || 0,
+      commissioner: balance.counts.commissioner || 0,
+      maniac: balance.counts.maniac || 0
     };
   }
 
@@ -1112,7 +1481,13 @@ export function createGameEngine(io) {
   function clearRoomTimer(room) {
     if (room.timer) clearTimeout(room.timer);
     room.timer = null;
+    clearSpeakerTimer(room);
     clearBotTalkTimer(room);
+  }
+
+  function clearSpeakerTimer(room) {
+    if (room.speakerTimer) clearTimeout(room.speakerTimer);
+    room.speakerTimer = null;
   }
 
   function clearBotTalkTimer(room) {
@@ -1121,6 +1496,15 @@ export function createGameEngine(io) {
     room.botTalkTimer = null;
     room.botTalkStarter = null;
     room.botTalkInFlight = false;
+  }
+
+  function touchPlayer(player) {
+    if (player) player.lastActiveAt = Date.now();
+  }
+
+  function isAfk(player) {
+    if (player.isBot || !player.connected) return false;
+    return Date.now() - (player.lastActiveAt || 0) > 120000;
   }
 
   function emitError(socket, message) {

@@ -45,12 +45,29 @@ const defaultSettings = {
   autoHost: true,
   communication: "text",
   botTalk: false,
+  soundEnabled: true,
+  revealRoleOnDeath: true,
+  speakerDuration: 90,
+  phaseDurations: {
+    night: 45,
+    discussion: 180,
+    voting: 30,
+    morning: 20
+  },
   roles: {
     civilian: true,
     mafia: true,
     don: true,
     commissioner: true,
-    doctor: true
+    doctor: true,
+    maniac: false,
+    counts: {
+      mafia: 2,
+      don: 1,
+      doctor: 1,
+      commissioner: 1,
+      maniac: 0
+    }
   }
 };
 
@@ -59,7 +76,8 @@ const roleIcons = {
   mafia: Skull,
   don: Crown,
   commissioner: ShieldCheck,
-  doctor: HeartPulse
+  doctor: HeartPulse,
+  maniac: Skull
 };
 
 const roleTone = {
@@ -67,7 +85,8 @@ const roleTone = {
   mafia: "mafia",
   don: "mafia",
   commissioner: "law",
-  doctor: "heal"
+  doctor: "heal",
+  maniac: "solo"
 };
 
 function App() {
@@ -320,6 +339,33 @@ function RoomSettingsForm({ settings, onChange, compact = false }) {
     });
   }
 
+  function updateRoleCount(role, value) {
+    onChange({
+      ...settings,
+      roles: {
+        ...settings.roles,
+        counts: {
+          ...settings.roles.counts,
+          [role]: Number(value)
+        }
+      }
+    });
+  }
+
+  function updateDuration(phase, value) {
+    onChange({
+      ...settings,
+      phaseDurations: {
+        ...settings.phaseDurations,
+        [phase]: Number(value)
+      }
+    });
+  }
+
+  const roleCounts = settings.roles.counts || defaultSettings.roles.counts;
+  const civilians = Math.max(0, settings.capacity - Object.values(roleCounts).reduce((sum, value) => sum + Number(value || 0), 0));
+  const warning = getRoleBalanceWarning(settings.capacity, roleCounts);
+
   return (
     <div className={compact ? "settings-form compact" : "settings-form"}>
       <label className="range-field">
@@ -357,6 +403,60 @@ function RoomSettingsForm({ settings, onChange, compact = false }) {
         </button>
       </div>
 
+      <div className="switch-row">
+        <span>Звуки и музыка</span>
+        <button
+          className={settings.soundEnabled ? "switch on" : "switch"}
+          type="button"
+          aria-pressed={settings.soundEnabled}
+          onClick={() => update({ soundEnabled: !settings.soundEnabled })}
+        >
+          <span />
+        </button>
+      </div>
+
+      <div className="switch-row">
+        <span>Раскрывать роль после смерти</span>
+        <button
+          className={settings.revealRoleOnDeath ? "switch on" : "switch"}
+          type="button"
+          aria-pressed={settings.revealRoleOnDeath}
+          onClick={() => update({ revealRoleOnDeath: !settings.revealRoleOnDeath })}
+        >
+          <span />
+        </button>
+      </div>
+
+      <div className="timer-grid">
+        {[
+          ["night", "Ночь", 15, 180],
+          ["discussion", "Обсуждение", 30, 600],
+          ["voting", "Голосование", 10, 180]
+        ].map(([phase, title, min, max]) => (
+          <label className="mini-number-field" key={phase}>
+            <span>{title}, сек.</span>
+            <input
+              type="number"
+              min={min}
+              max={max}
+              value={settings.phaseDurations?.[phase] || defaultSettings.phaseDurations[phase]}
+              onChange={(event) => updateDuration(phase, event.target.value)}
+            />
+          </label>
+        ))}
+      </div>
+
+      <label className="mini-number-field speaker-duration-field">
+        <span>Время речи игрока, сек.</span>
+        <input
+          type="number"
+          min="15"
+          max="300"
+          value={settings.speakerDuration || defaultSettings.speakerDuration}
+          onChange={(event) => update({ speakerDuration: Number(event.target.value) })}
+        />
+      </label>
+
       <div className="segmented" role="group" aria-label="Тип общения">
         <button
           className={settings.communication === "text" ? "active" : ""}
@@ -374,27 +474,53 @@ function RoomSettingsForm({ settings, onChange, compact = false }) {
         </button>
       </div>
 
-      <div className="role-toggle-grid">
+      <div className="role-count-grid">
         {Object.entries({
-          civilian: "Мирные",
           mafia: "Мафия",
           don: "Дон",
+          doctor: "Доктор",
           commissioner: "Комиссар",
-          doctor: "Доктор"
+          maniac: "Маньяк"
         }).map(([role, title]) => {
-          const Icon = roleIcons[role];
-          const locked = role === "civilian" || role === "mafia";
+          const Icon = roleIcons[role] || Users;
           return (
-            <button
-              key={role}
-              type="button"
-              className={`role-toggle ${settings.roles[role] ? "active" : ""} ${locked ? "locked" : ""}`}
-              disabled={locked}
-              onClick={() => updateRole(role, !settings.roles[role])}
-            >
+            <label className="role-count" key={role}>
+              <span>
+                <Icon size={15} />
+                {title}
+              </span>
+              <input
+                type="number"
+                min={role === "mafia" ? 1 : 0}
+                max={role === "don" || role === "maniac" ? 1 : 5}
+                value={roleCounts[role] ?? 0}
+                onChange={(event) => updateRoleCount(role, event.target.value)}
+              />
+            </label>
+          );
+        })}
+        <div className="role-count civilian-count">
+          <span>
+            <Users size={15} />
+            Мирные
+          </span>
+          <strong>{civilians}</strong>
+        </div>
+      </div>
+
+      {warning ? <div className="status-line warn role-warning">{warning}</div> : null}
+
+      <div className="role-toggle-grid legacy-toggles">
+        {Object.entries({
+          civilian: "Мирные",
+          mafia: "Мафия"
+        }).map(([role, title]) => {
+          const Icon = roleIcons[role] || Users;
+          return (
+            <button key={role} type="button" className="role-toggle active locked" disabled>
               <Icon size={16} />
               <span>{title}</span>
-              {locked ? <Check size={14} /> : null}
+              <Check size={14} />
             </button>
           );
         })}
@@ -453,7 +579,7 @@ function LobbyView({ room, emit, onLeave }) {
           </div>
           <div className="lobby-players">
             {room.players.map((player) => (
-              <PlayerListItem key={player.id} player={player} roleMeta={room.roleMeta} />
+              <PlayerListItem key={player.id} player={player} room={room} emit={emit} roleMeta={room.roleMeta} />
             ))}
           </div>
         </div>
@@ -517,13 +643,22 @@ function SettingsSummary({ room }) {
       <span>{room.settings.autoHost ? "Автоматический ведущий" : "Ведущий управляет фазами"}</span>
       <span>{room.settings.communication === "voice" ? "Голосовой чат" : "Текстовый чат"}</span>
       <span>{room.settings.botTalk ? "Боты участвуют в обсуждении" : "Боты молчат в обсуждении"}</span>
+      <span>{room.settings.soundEnabled ? "Звуки включены" : "Звуки выключены"}</span>
+      <span>{room.settings.revealRoleOnDeath ? "Роли раскрываются после смерти" : "Роли после смерти скрыты"}</span>
+      <span>
+        Таймеры: ночь {room.settings.phaseDurations?.night || 45}с, обсуждение{" "}
+        {room.settings.phaseDurations?.discussion || 180}с, голосование {room.settings.phaseDurations?.voting || 30}с
+      </span>
+      <span>Речь игрока: {room.settings.speakerDuration || 90}с на человека</span>
       <span>Роли: {formatRoleCounts(room.roleCounts, room.roleMeta)}</span>
+      {room.roleBalance?.warning ? <span className="summary-warning">{room.roleBalance.warning}</span> : null}
     </div>
   );
 }
 
 function GameView({ room, emit, onLeave }) {
   const [chatOpen, setChatOpen] = useState(false);
+  useGameAudio(room);
 
   function toggleVoice() {
     const next = !room.viewer.micOn;
@@ -572,7 +707,7 @@ function GameView({ room, emit, onLeave }) {
         </FloatingPanel>
       </div>
 
-      {room.winner ? <VictoryModal room={room} onLeave={onLeave} /> : null}
+      {room.winner ? <VictoryModal room={room} emit={emit} onLeave={onLeave} /> : null}
     </section>
   );
 }
@@ -664,10 +799,12 @@ function SeatCard({ player, room, emit, style }) {
   const nightAction = getNightButton(room, player, emit);
   const voteAction = getVoteButton(room, player, emit);
   const RoleIcon = player.role ? roleIcons[player.role] || Eye : Eye;
+  const hasVotes = Boolean(room.voteState?.counts?.[player.id]);
+  const canKick = room.viewer.canManage && player.id !== room.viewer.id;
 
   return (
     <div
-      className={`seat-card ${!player.alive ? "dead" : ""} ${isActive ? "speaking" : ""} ${isMe ? "me" : ""}`}
+      className={`seat-card ${!player.alive ? "dead" : ""} ${isActive ? "speaking" : ""} ${isMe ? "me" : ""} ${hasVotes ? "vote-target" : ""}`}
       style={style}
     >
       <div className="seat-avatar-wrap">
@@ -676,6 +813,7 @@ function SeatCard({ player, room, emit, style }) {
       </div>
       <div className="seat-name">{player.name}</div>
       <div className={player.alive ? "life-badge alive" : "life-badge dead"}>{player.alive ? "жив" : "мертв"}</div>
+      {player.afk ? <div className="life-badge afk">AFK</div> : null}
       {player.role ? (
         <div className={`seat-role ${roleTone[player.role] || ""}`}>
           <RoleIcon size={13} />
@@ -695,6 +833,11 @@ function SeatCard({ player, room, emit, style }) {
         </button>
       ) : null}
       {room.voteState?.counts?.[player.id] ? <div className="vote-count">{room.voteState.counts[player.id]}</div> : null}
+      {canKick ? (
+        <button className="kick-mini" title="Кикнуть игрока" onClick={() => emit("kickPlayer", { targetId: player.id })}>
+          ×
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -753,7 +896,10 @@ function ActionPanel({ room, emit }) {
           <p>Партия готовится к следующей фазе.</p>
         )}
       </div>
+      {room.discussionTurn ? <SpeakerTurnCard room={room} /> : null}
       {room.lastVoteResult ? <div className="result-box">{room.lastVoteResult.text}</div> : null}
+      {room.voteState?.rows?.length ? <VoteTable rows={room.voteState.rows} title="Ход голосования" /> : null}
+      {room.lastVoteResult?.rows?.length ? <VoteTable rows={room.lastVoteResult.rows} title="Итоги голосования" /> : null}
       {room.voice.enabled ? (
         <div className="voice-note">
           <Mic size={16} />
@@ -761,6 +907,46 @@ function ActionPanel({ room, emit }) {
         </div>
       ) : null}
     </section>
+  );
+}
+
+function SpeakerTurnCard({ room }) {
+  const turn = room.discussionTurn;
+  if (!turn) return null;
+  return (
+    <div className="speaker-card">
+      <span>
+        Говорит {turn.activeSpeakerName} · {turn.index + 1}/{turn.total}
+      </span>
+      <SpeakerTimer turn={turn} />
+    </div>
+  );
+}
+
+function SpeakerTimer({ turn }) {
+  const [now, setNow] = useState(Date.now());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 400);
+    return () => window.clearInterval(id);
+  }, []);
+
+  const endsAt = turn.startedAt + turn.duration * 1000;
+  const seconds = Math.max(0, Math.ceil((endsAt - now) / 1000));
+  return <strong>{formatSeconds(seconds)}</strong>;
+}
+
+function VoteTable({ rows, title }) {
+  return (
+    <div className="vote-table">
+      <strong>{title}</strong>
+      {rows.map((row) => (
+        <div className={row.skipped ? "vote-row skipped" : "vote-row"} key={`${row.voterId}-${row.index}`}>
+          <span>{row.voterName}</span>
+          <span>{row.targetName}</span>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -801,16 +987,26 @@ function HostPanel({ room, emit }) {
 
 function ChatPanel({ room, emit }) {
   const [text, setText] = useState("");
+  const [channel, setChannel] = useState("alive");
   const scrollRef = useRef(null);
+  const canUseMafia = room.phase === "night" && room.viewer.alive && isMafiaRoleClient(room.myRole);
+  const canUseDead = !room.viewer.alive || room.phase === "finished";
+  const channels = [
+    { id: "alive", label: "Общий" },
+    ...(canUseMafia ? [{ id: "mafia", label: "Мафия" }] : []),
+    ...(canUseDead ? [{ id: "dead", label: "Мертвые" }] : [])
+  ];
+  const activeChannel = channels.some((item) => item.id === channel) ? channel : "alive";
+  const messages = room.chat.filter((message) => (message.channel || "alive") === activeChannel || message.type === "system");
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight });
-  }, [room.chat.length]);
+  }, [messages.length, activeChannel]);
 
   function send(event) {
     event.preventDefault();
     if (!text.trim()) return;
-    emit("sendChat", { text });
+    emit("sendChat", { text, channel: activeChannel });
     setText("");
   }
 
@@ -820,9 +1016,16 @@ function ChatPanel({ room, emit }) {
         <MessageCircle size={19} />
         <span>{room.viewer.alive ? "Чат комнаты" : "Чат мертвых"}</span>
       </div>
+      <div className="chat-tabs">
+        {channels.map((item) => (
+          <button className={activeChannel === item.id ? "chat-tab active" : "chat-tab"} key={item.id} type="button" onClick={() => setChannel(item.id)}>
+            {item.label}
+          </button>
+        ))}
+      </div>
       <div className="chat-messages" ref={scrollRef}>
-        {room.chat.map((message) => (
-          <div key={message.id} className={`chat-message ${message.type === "system" ? "system" : ""}`}>
+        {messages.map((message) => (
+          <div key={message.id} className={`chat-message ${message.type === "system" ? "system" : ""} ${message.channel || "alive"}`}>
             <span>{message.playerName}</span>
             <p>{message.text}</p>
           </div>
@@ -854,16 +1057,28 @@ function EventPanel({ room }) {
   );
 }
 
-function VictoryModal({ room, onLeave }) {
+function VictoryModal({ room, emit, onLeave }) {
   return (
     <div className="modal-backdrop">
       <div className={`victory-modal ${room.winner.team}`}>
         <Sparkles size={34} />
         <h2>{room.winner.title}</h2>
         <p>{room.winner.text}</p>
-        <button className="primary-action victory-exit" onClick={onLeave}>
-          <DoorOpen size={18} /> В главное меню
-        </button>
+        <div className="stat-grid">
+          <span>Раундов: {room.gameStats?.rounds || room.round}</span>
+          <span>Выбыло: {room.gameStats?.deaths || 0}</span>
+          <span>Живы: {room.gameStats?.alive || 0}</span>
+        </div>
+        <div className="victory-actions">
+          {room.viewer.canManage ? (
+            <button className="secondary-action" onClick={() => emit("replayGame")}>
+              <Play size={18} /> Играть еще раз
+            </button>
+          ) : null}
+          <button className="primary-action victory-exit" onClick={onLeave}>
+            <DoorOpen size={18} /> В главное меню
+          </button>
+        </div>
         <div className="reveal-grid">
           {room.players.map((player) => (
             <div key={player.id} className="reveal-item">
@@ -878,7 +1093,8 @@ function VictoryModal({ room, onLeave }) {
   );
 }
 
-function PlayerListItem({ player, roleMeta }) {
+function PlayerListItem({ player, room, emit, roleMeta }) {
+  const canKick = room?.viewer?.canManage && player.id !== room.viewer.id;
   return (
     <div className="player-list-item">
       <img src={player.avatar} alt="" />
@@ -889,7 +1105,13 @@ function PlayerListItem({ player, roleMeta }) {
         </span>
       </div>
       {player.ready ? <Check className="ready-icon" size={18} /> : null}
+      {player.afk ? <small className="afk-chip">AFK</small> : null}
       {player.role ? <small>{roleMeta[player.role]?.title}</small> : null}
+      {canKick ? (
+        <button className="kick-mini lobby-kick" title="Кикнуть игрока" onClick={() => emit("kickPlayer", { targetId: player.id })}>
+          ×
+        </button>
+      ) : null}
     </div>
   );
 }
@@ -946,6 +1168,7 @@ function getNightButton(room, player, emit) {
   const selected = action.selectedTargetId === player.id;
   const icons = {
     kill: <Skull size={13} />,
+    maniackill: <Skull size={13} />,
     inspect: <Eye size={13} />,
     heal: <HeartPulse size={13} />
   };
@@ -997,6 +1220,108 @@ function formatRoleCounts(counts, roleMeta) {
   return Object.entries(counts)
     .map(([role, count]) => `${roleMeta[role]?.title || role}: ${count}`)
     .join(", ");
+}
+
+function getRoleBalanceWarning(playerCount, countsInput = {}) {
+  const total = Object.values(countsInput).reduce((sum, value) => sum + Number(value || 0), 0);
+  const mafiaTeam = Number(countsInput.mafia || 0) + Number(countsInput.don || 0);
+  if (total > playerCount) return "Ролей больше, чем игроков. Лишние роли будут убраны автоматически.";
+  if (mafiaTeam < 1) return "Нужна хотя бы одна роль мафии или дона.";
+  if (mafiaTeam >= Math.ceil(playerCount / 2)) return "Мафии слишком много: партия может закончиться слишком быстро.";
+  if (Number(countsInput.maniac || 0) > 0 && playerCount < 7) return "Маньяк лучше работает в партиях от 7 игроков.";
+  return "";
+}
+
+function isMafiaRoleClient(role) {
+  return role === "mafia" || role === "don";
+}
+
+function useGameAudio(room) {
+  const audioRef = useRef({ ctx: null, phase: null, deathKey: "", winner: null, hum: null });
+
+  useEffect(() => {
+    const state = audioRef.current;
+    if (!room.settings?.soundEnabled) {
+      stopHum(state);
+      state.phase = room.phase;
+      state.deathKey = "";
+      state.winner = null;
+      return;
+    }
+
+    const ctx = getAudioContext(state);
+    if (!ctx) return;
+    ctx.resume?.().catch(() => {});
+
+    if (state.phase !== room.phase) {
+      if (room.phase === "night") {
+        playTone(ctx, 190, 0.34, "sine", 0.055);
+        startHum(state, ctx);
+      } else {
+        stopHum(state);
+      }
+      if (room.phase === "voting") playTone(ctx, 520, 0.22, "triangle", 0.07);
+      state.phase = room.phase;
+    }
+
+    const deathKey = (room.lastNightResult?.killedIds || [room.lastNightResult?.killedId]).filter(Boolean).join(",");
+    if (deathKey && state.deathKey !== deathKey) {
+      playTone(ctx, 92, 0.42, "sawtooth", 0.05);
+      state.deathKey = deathKey;
+    }
+
+    if (room.winner?.team && state.winner !== room.winner.team) {
+      playTone(ctx, room.winner.team === "mafia" ? 240 : 680, 0.42, "triangle", 0.08);
+      window.setTimeout(() => playTone(ctx, room.winner.team === "mafia" ? 180 : 820, 0.42, "triangle", 0.06), 180);
+      state.winner = room.winner.team;
+    }
+  }, [room.phase, room.settings?.soundEnabled, room.lastNightResult?.killedId, room.lastNightResult?.text, room.winner?.team]);
+
+  useEffect(() => () => stopHum(audioRef.current), []);
+}
+
+function getAudioContext(state) {
+  if (state.ctx) return state.ctx;
+  const AudioCtor = window.AudioContext || window.webkitAudioContext;
+  if (!AudioCtor) return null;
+  state.ctx = new AudioCtor();
+  return state.ctx;
+}
+
+function playTone(ctx, frequency, duration, type = "sine", volume = 0.06) {
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = type;
+  osc.frequency.value = frequency;
+  gain.gain.setValueAtTime(0.0001, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(volume, ctx.currentTime + 0.025);
+  gain.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + duration);
+  osc.connect(gain).connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + duration + 0.04);
+}
+
+function startHum(state, ctx) {
+  if (state.hum) return;
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.type = "sine";
+  osc.frequency.value = 72;
+  gain.gain.value = 0.012;
+  osc.connect(gain).connect(ctx.destination);
+  osc.start();
+  state.hum = { osc, gain };
+}
+
+function stopHum(state) {
+  if (!state.hum) return;
+  try {
+    state.hum.gain.gain.exponentialRampToValueAtTime(0.0001, state.ctx.currentTime + 0.18);
+    state.hum.osc.stop(state.ctx.currentTime + 0.2);
+  } catch {
+    state.hum.osc.disconnect();
+  }
+  state.hum = null;
 }
 
 function readSession() {
